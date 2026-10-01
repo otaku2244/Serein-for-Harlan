@@ -19,6 +19,7 @@ const features = {
   write_context:['写入时找前情','新建 Scene 后，至多提示一条可能相关的旧 Scene，以及它可能所属的 Arc。只返回候选，不建关系或加入 Arc；没有可靠线索就不提示。'],
   relations_auto_accept:['关系提案自动通过','新提案写完后自动通过；仍需通过当前记忆与证据校验。'],
   resume:['开窗续接（resume）','新窗口或发送 /resume 时，按下面的选择带入内容。'],
+  auto_resume:['新窗自动续接','需先开启上方的“开窗续接”。每个新窗口的首条消息自动带入续接内容，不必再手动发送 /resume；读取范围沿用下面的选择。每个窗口只自动带入一次，手动 /resume 不受影响。默认关闭。'],
 };
 
 const fallbackTimeZones = ['Asia/Shanghai','UTC','Asia/Tokyo','Asia/Singapore','Europe/London','Europe/Berlin','America/New_York','America/Chicago','America/Denver','America/Los_Angeles','Australia/Sydney'];

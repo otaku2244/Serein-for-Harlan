@@ -11,7 +11,7 @@ import types
 from uuid import uuid4
 import zipfile
 
-REPOSITORY = 'Yinglianchun/Serein'
+REPOSITORY = 'otaku2244/Serein-for-Harlan'
 REMOTE = f'https://github.com/{REPOSITORY}.git'
 BRANCH = 'main'
 MAX_SOURCE_BYTES = 300 * 1024 * 1024

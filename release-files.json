@@ -102,6 +102,7 @@
   "src/serein/image_transcription.py",
   "src/serein/chat_observation.py",
   "src/serein/chat_resume.py",
+  "src/serein/chat_resume_auto.py",
   "src/serein/chat_state.py",
   "src/serein/cli.py",
   "src/serein/compat/__init__.py",

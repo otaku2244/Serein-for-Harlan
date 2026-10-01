@@ -15,6 +15,7 @@ from ..chat_context import ClientContext
 from ..model_runtime import request_for, AnthropicStream, complete, UpstreamError
 from ..core.store import digest, encode, Conflict
 from .. import chat_resume
+from .. import chat_resume_auto
 from ..chat_observation import ChatObservation, recall_summary
 from ..chat_archive import prepare_turn, archive_turn, archive_user_turn
 
@@ -170,6 +171,7 @@ def routes(settings, services, auth):
             raise HTTPException(400, 'Window ID must be at most 200 characters')
         context.operit_context_rewrite_enabled = state['upstream']['operit_enabled']
         query = context._extract_current_turn_user_query(incoming)
+        window_is_new = chat_resume_auto.claim_first_turn(services, window_id, incoming, query)
         observation.start(window_id, query, use_memory)
         archive_input = prepare_turn(window_id, incoming)
         image_context = ''
@@ -221,6 +223,10 @@ def routes(settings, services, auth):
                 resume_snapshot = await asyncio.to_thread(chat_resume.retained, services, window_id, incoming, context)
                 if resume_snapshot:
                     messages, retained_anchor = chat_resume.mark_retained_anchor(messages, resume_snapshot, context)
+            # Local extension: the first turn of a window that never sent /resume and
+            # has no stored snapshot yet loads the same material /resume would carry.
+            auto_resume = bool(resume_query is None and resume_snapshot is None and window_is_new
+                               and state['features']['resume'] and state['features'].get('auto_resume'))
             if query:
                 messages, stable, activity, _ = context._rewrite_operit_context_for_forward(messages)
             resume_context = ''
@@ -242,7 +248,16 @@ def routes(settings, services, auth):
                 # removing the historical command from every later request.
                 messages = chat_resume.inject_retained(messages, resume_snapshot, context, retained_anchor)
                 resume_context = ''
-            if use_memory and query and resume_query is None:
+            elif auto_resume:
+                resume_context, resume_items = await asyncio.to_thread(
+                    chat_resume_auto.load, services, window_id, incoming, context)
+                if resume_context:
+                    recall_state = 'auto_resume'
+                    resume_snapshot = {'source_count':len(incoming), 'source_digest':context._turn_injection_messages_digest(incoming),
+                                       'context':resume_context, 'items':resume_items}
+                else:
+                    auto_resume = False
+            if use_memory and query and resume_query is None and not auto_resume:
                 from ..configured_models import memory_ready
                 if not memory_ready(settings):
                     raise HTTPException(409, 'Prepare the selected embedding model, reranker and routes in Settings')
