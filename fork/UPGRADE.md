@@ -11,6 +11,19 @@
 
 作用：把安装目录的更新来源，从「原作者仓库」改成「你自己的仓库」。
 
+### 前置：这台电脑要有一个 Git
+
+2026-10-01 实测：本机**没有安装 Git**（只有 WorkBuddy 自带的便携版，双击 `.cmd` 时用不到），所以双击会报 `'git' 不是内部或外部命令`。
+
+装法（Windows）：
+
+1. 打开 <https://git-scm.com/download/win>，下载 64 位安装包（约 70 MB）。
+2. 一路默认下一步即可。**唯一要确认的一项**：在 "Adjusting your PATH environment" 那页保持默认的
+   `Git from the command line and also from 3rd-party software` —— 这一项负责把 git 加进 PATH，别改。
+3. 装完**关掉所有已打开的窗口**（PATH 要重新加载才生效），开个新的命令提示符，输入 `git --version`，能打印版本号就成了。
+
+> 顺带一提：`ssh` / `scp` 不用装，Windows 自带的 OpenSSH 已经有了（`C:\Windows\System32\OpenSSH\`），第 2 步够用。
+
 ### 第 1 步：把本地代码推到 GitHub
 
 远端已经配好了（`origin` = 你的仓库，`upstream` = 原作者仓库，后者要留着才能跟进上游更新），**只差推送**：
@@ -176,7 +189,8 @@ ls -lt /root/Serein/deploy/backups/source-*.zip | head -3
 - **指纹兜底只在窗口 ID 不具体时生效。** 客户端如果送唯一 ID，Serein 就认 ID，两条长得一样的第一句话会被当成两个窗口 —— 这是想要的。
 - **续接资料存在 `chat_resume_contexts` 表里，窗口 ID 仍然是客户端给的那个原始值**（比如 `operit`），每个窗口 ID 最多保留 8 份。这是上游原有机制，我没动。指纹只用来判断「这是不是新窗口」。
 - **客户端把动态状态塞进 system 提示词时，第二轮可能匹配不上前缀**（`retained()` 用的是前缀摘要比对）。匹配不上就老老实实不注入，不会出错 —— 只是那一轮拿不到续接资料。Operit 的【吧台现状】这类动态块属于这种情况。
-- **两个 `.cmd` 只是省事的壳子。** 它们编码和跳转都静态校验过（UTF-8 无 BOM、LF、标签全部对得上），但**没有在本机实际跑过** —— 当前环境的沙箱禁止调用 `cmd.exe`。真正做事的逻辑全在 `cutover-to-fork.sh` 里，那个脚本的每个分支都在本机实测过。所以批处理万一有毛病，上面「等价的手工命令」永远可用。
+- **两个 `.cmd` 必须保持 CRLF 行尾。** 2026-10-01 首次双击失败，报了一串 `'cho' 不是内部或外部命令`、`'-v' 不是...` 这类错 —— 那是 cmd.exe 用 LF 行尾会按字节错位解析，把行首字符啃掉。已全部改成 CRLF。这台机器上 Windows 的 `core.autocrlf=true` 会在检出时自动给成 CRLF，所以正常 `git checkout` 不会退回 LF；但如果哪天手工另存过文件，记得确认行尾。
+- **两个 `.cmd` 的跳转和编码都静态校验过，但没有在本机实际执行过** —— 当前环境的沙箱禁止调用 `cmd.exe`。真正做事的逻辑全在 `cutover-to-fork.sh` 里，那个脚本的每个分支都在本机实测过。所以批处理万一还有毛病，上面「等价的手工命令」永远可用。
 - **安装／更新路径上没有第二处写死仓库地址。** 全仓库搜 `github.com` 一共 8 处，只有 `scripts/upstream_update.py` 一处参与机制（它就是我们要替换的那个，之后随每次更新自替换）。其余全是文档与帮助链接，与安装无关：`README.md` 的徽章、`web/package-lock.json` 的 npm 赞助信息、`docs/interactive-install.md` 的 Termux 说明、`docs/paper/manuscript.zh-CN.md` 的引用、`web/src/components/UsageGuide.jsx` 里指向上游仓库文档的帮助链接（这两条会继续指向上游 —— 上游文档描述的就是这套代码，指过去是对的）。另外 `manage.py` 的部署流程是从本地源码目录构建、不做 git clone，所以全新安装装出来的也是 fork 版本。
 
 ---
