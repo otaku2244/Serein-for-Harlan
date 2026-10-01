@@ -176,8 +176,8 @@ case "$VERDICT_CODE" in
       die "更新器的第一道校验会因此拒绝执行。请先弄清这些改动来自哪里；
         若确认它们可以被 fork 源码覆盖，再加 --force 执行。"
     fi
-    warn "--force：将把 update-state.json 移开，并摘掉 .git，让更新器跳过全部三道校验，"
-    warn "        然后用 fork 源码整体覆盖上述文件。这些改动不会保留。"
+    warn "注意：第 4 步本来就会移开 update-state.json 并摘掉 .git（原因见脚本内注释），"
+    warn "--force 只表示一件事：认可上面这些不一致的本地改动会被 fork 源码整体覆盖、不保留。"
     ;;
   *)
     die "体检脚本返回了看不懂的结果：$VERDICT_CODE"
@@ -210,12 +210,20 @@ python3 -c 'import ast,sys; ast.parse(open(sys.argv[1],encoding="utf-8").read())
 ok "已取回并校验：$(sha256sum "$TMP" | tr -d '\\' | cut -c1-16)…  指向 ${FORK_SLUG}"
 
 # ─────────────────────────────────────────────── 4. 落地
-say "4/6 落地：备份台账 → 摘掉上游 .git → 换更新器"
+say "4/6 落地：移开台账 → 摘掉上游 .git → 换更新器"
+
+# 台账必须「移开」而不只是备份。接下来要替换的 scripts/upstream_update.py
+# 本身就在台账的受管清单里 —— 只要台账还在，更新器的第一道校验就会算出
+# 「安装源码在上次更新后被修改」并拒绝执行。移开后台账为空，三道校验全部跳过，
+# 更新从 fork 拉全量源码，跑完再写一份新台账，之后就永久自洽。
+MOVED=""
 if [ -f "$STATE" ]; then
-  plan "备份 $STATE → ${STATE}.before-fork-${STAMP}"
-  if [ "$APPLY" = 1 ]; then cp -a "$STATE" "${STATE}.before-fork-${STAMP}"; fi
+  MOVED="${STATE}.before-fork-${STAMP}"
+  if [ "$VERDICT_CODE" != "CLEAN" ]; then MOVED="${STATE}.drifted-${STAMP}"; fi
+  plan "移开 $STATE → ${MOVED}（只改名，随时可改回）"
+  if [ "$APPLY" = 1 ]; then mv "$STATE" "$MOVED"; fi
 else
-  ok "没有 update-state.json 可备份（本次是首次接入更新）。"
+  ok "没有 update-state.json，本来就无须移开。"
 fi
 
 if [ -d "$ROOT/.git" ]; then
@@ -229,13 +237,6 @@ plan "备份并替换 $ROOT/$UPDATER_REL"
 if [ "$APPLY" = 1 ]; then
   cp -a "$ROOT/$UPDATER_REL" "$ROOT/${UPDATER_REL}.before-fork-${STAMP}"
   install -m 0644 "$TMP" "$ROOT/$UPDATER_REL"
-fi
-
-if [ "$FORCE" = 1 ] && [ "$VERDICT_CODE" != "CLEAN" ] && [ -f "$STATE" ]; then
-  plan "（--force）把 $STATE 改名移开，让更新器跳过全部三道校验"
-  if [ "$APPLY" = 1 ]; then
-    mv "$STATE" "${STATE}.drifted-${STAMP}"
-  fi
 fi
 
 # ─────────────────────────────────────────────── 5. 跑更新
@@ -262,7 +263,8 @@ if [ "$APPLY" != 1 ]; then
   exit 0
 fi
 
-python3 - "$ROOT" "$FORK_HEAD" "$FORK_SLUG" <<'PY'
+VERIFY=0
+python3 - "$ROOT" "$FORK_HEAD" "$FORK_SLUG" <<'PY' || VERIFY=$?
 import importlib.util
 import json
 import subprocess
@@ -331,7 +333,13 @@ PY
 
 printf '\n'
 printf '  本次留下的现场（都不影响运行，确认稳定后可以删）：\n'
-printf '    %s\n' "${STATE}.before-fork-${STAMP}"
+if [ -n "$MOVED" ]; then printf '    %s\n' "$MOVED"; fi
 if [ -d "$ROOT/.git.upstream-${STAMP}" ]; then printf '    %s\n' "$ROOT/.git.upstream-${STAMP}"; fi
 printf '    %s\n' "$ROOT/${UPDATER_REL}.before-fork-${STAMP}"
 printf '  源码备份 zip 在 %s/deploy/backups/（更新器自动留的）\n\n' "$ROOT"
+
+if [ "$VERIFY" != 0 ]; then
+  printf '  校验没过，先别动开关。把上面带 [失败] 的行贴出来即可；\n'
+  printf '  回滚（把台账和 .git 改回去）见 fork/UPGRADE.md。\n\n'
+fi
+exit "$VERIFY"

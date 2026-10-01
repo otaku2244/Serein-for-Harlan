@@ -39,7 +39,7 @@ cd E:\workbuddy\2026-09-21-20-44-34\Serein-fork
 git push -u origin main
 ```
 
-推送时会要求登录 GitHub。推完网页上应能看到 4 个提交，其中两个是代码改动（`feat(gateway): auto-load continuation material on a new window`、`fix(gateway): replay automatic resume snapshots without the /resume command`），另外两个是 `fork/` 下的工具与文档。
+推送时会要求登录 GitHub。推完网页上应能看到 8 个提交，其中**只有两个是真正的代码改动**（`feat(gateway): auto-load continuation material on a new window`、`fix(gateway): replay automatic resume snapshots without the /resume command`），其余都是 `fork/` 下的工具、文档和测试。
 
 > 这台电脑上没有任何 GitHub 凭据（无 `~/.git-credentials`、凭据管理器里也没有条目），所以推送必须由你本人完成。
 
@@ -67,6 +67,8 @@ ssh -t root@154.21.200.74 "bash /tmp/serein-cutover.sh --updater-file /tmp/serei
 
 想跳过数据备份（更新器默认会先备份一次运行数据）就在 `--apply` 后面再加 `--skip-data-backup`。
 
+`--force` 只在一件事上有用：第 2 步报 `DIRTY`（有文件跟上次更新记录对不上）或 `NOSTATE`（压根没台账）时，脚本会先停住。加上 `--force` 表示「这些不一致我认了，让 fork 源码整体覆盖过去」。它**不会**改变第 4 步的动作 —— 移开台账和摘掉 `.git` 是常规流程，有没有 `--force` 都一样。
+
 ### 脚本的 6 个步骤各自做什么
 
 | 步 | 动作 | 可回滚性 |
@@ -75,13 +77,36 @@ ssh -t root@154.21.200.74 "bash /tmp/serein-cutover.sh --updater-file /tmp/serei
 | 1 | 读 fork 的 `main` 提交号；读不到就中止并给出推送命令 | 只读 |
 | 2 | **关键门禁**：核对磁盘源码与 `update-state.json` 记录的哈希是否完全一致 | 只读 |
 | 3 | 取回 fork 版更新器（`--updater-file` 指定就用本地文件，否则下载），校验它确实指向本 fork、且语法通过，才继续 | 只读 |
-| 4 | 备份 `update-state.json` → 把 `.git` 改名摘掉 → 替换更新器 | 全部只改名/备份，可还原 |
+| 4 | **移开** `update-state.json`（只改名，不是备份） → 把 `.git` 改名摘掉 → 替换更新器 | 全部只改名/备份，可还原 |
 | 5 | 跑 `se → 1`（程序化喂两个选项：菜单 1、备份 1） | 更新器自带源码 zip 备份 |
-| 6 | 独立校验结果：台账、容器、新模块是否真的到位 | 只读 |
+| 6 | 独立校验结果：台账、容器、新模块是否真的到位（退出码即校验结果） | 只读 |
 
-第 2 步是全脚本唯一的硬门槛。它和更新器内部的第一道校验是同一套逻辑，所以第 2 步过了，第 5 步就一定会被放行。**报 `DIRTY` 时脚本会停住并列出漂移的文件名**，不会硬闯。
+第 2 步是全脚本唯一的硬门槛：它和更新器内部的第一道校验是同一套逻辑，所以第 2 步的 `CLEAN` / `DIRTY` 就代表更新器此刻的态度。**报 `DIRTY` 时脚本会停住并列出漂移的文件名**，不会硬闯；确认这些改动可以丢弃，再加 `--force` 继续。
 
-第 6 步之所以必须存在：`manage.py` 的菜单在更新失败时也会以退出码 0 结束（它把异常吞掉后回到菜单，再因 stdin 耗尽而正常退出）。所以不能信退出码，只能回读台账和容器状态。
+第 6 步之所以必须存在：`manage.py` 的菜单在更新失败时也会以退出码 0 结束（它把异常吞掉后回到菜单，再因 stdin 耗尽而正常退出）。所以不能信它的退出码，只能回读台账和容器状态 —— 这个脚本自己的退出码是可信的，校验几项没过就返回 1，并且**无论成败都会打印留下的现场路径**（回滚要用）。
+
+### 为什么必须把台账「移开」，而不是备份
+
+这一点很反直觉，值得单独说：**第 2 步判 `CLEAN` ≠ 不用动台账。**
+
+第 4 步要替换的 `scripts/upstream_update.py` **本身就在受管清单里**（它由 `release-files.json` 管着）。只要台账还留着，换掉这个文件之后磁盘哈希就变了，更新器的第一道校验立刻算出一句：
+
+```
+安装源码在上次更新后被修改，请先保存；未覆盖本地源码
+```
+
+也就是说：**更新器拒绝的恰恰是「换上它自己」这个动作。** 这不是行尾或内容差异问题，纯粹是自指。
+
+所以第 4 步做的是把台账**改名移开**（`update-state.json.before-fork-<时间戳>`）。台账不存在时，更新器的三道校验（中断恢复 / 台账一致 / `.git` 干净）全部跳过，从 fork 拉全量源码整体覆盖，跑完再写一份全新的、自洽的台账 —— 从此以后 `se → 1` 永久顺畅。
+
+实测（用基线提交 `5459ce4` 还原出一台「刚部署好、还指向上游」的机器）：
+
+| 情形 | 结果 |
+|---|---|
+| 什么都不动 | 放行 |
+| 只替换更新器、台账留着 | 拒绝：`安装源码在上次更新后被修改…` |
+| 移开台账 + 摘掉 `.git` + 替换更新器 | 放行 |
+
 
 ### 为什么要把 `.git` 改名
 
@@ -115,7 +140,7 @@ git merge upstream/main
 | 文件 | 我改了什么 |
 |---|---|
 | `src/serein/chat_resume_auto.py` | 新增，全部逻辑都在这里 |
-| `src/serein/api/chat.py` | 约 10 行：接线 |
+| `src/serein/api/chat.py` | 25 行：接线 + 自动续接分支 |
 | `src/serein/deployment.py` | `DEFAULT_FEATURES` 加一个键 `auto_resume: False` |
 | `web/src/components/FeatureSettings.jsx` | 加一行开关说明 |
 | `web/src/recallObservationOutcome.js` | 加一行状态文案 |
@@ -161,16 +186,18 @@ git merge upstream/main
 
 **只想关掉这个行为** —— 设置 → 功能，关掉 `新窗自动续接`。立刻生效，不动任何代码。
 
-**想退回上游代码** —— 用第 4 步留下的三个现场：
+**想退回上游代码** —— 用第 4 步留下的现场（脚本跑完会把这几个路径原样打印出来，直接抄）：
 
 ```bash
 cd /root/Serein/deploy
-mv update-state.json.before-fork-<时间戳> update-state.json
+mv update-state.json.before-fork-<时间戳> update-state.json      # 第 2 步报 DIRTY 时，名字是 .drifted-<时间戳>
 cd /root/Serein
 mv .git.upstream-<时间戳> .git
 cp -a scripts/upstream_update.py.before-fork-<时间戳> scripts/upstream_update.py
 se          # 再进菜单 1，它会从上游拉回原版源码并重建
 ```
+
+> 本来就**没有** `update-state.json` 的机器（体检报 `NOSTATE`）不需要第一行的 `mv`；脚本第 4 步也不会为它造现场。
 
 **想精确退回切换前的那一版** —— 更新器在第 5 步自动留了源码 zip：
 
