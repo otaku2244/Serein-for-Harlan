@@ -245,8 +245,12 @@ def routes(settings, services, auth):
             elif resume_snapshot:
                 resume_context, resume_items = resume_snapshot['context'], resume_snapshot['items']
                 # Preserve the frozen context at its original user anchor while
-                # removing the historical command from every later request.
-                messages = chat_resume.inject_retained(messages, resume_snapshot, context, retained_anchor)
+                # removing the historical command from every later request. An automatic
+                # snapshot has no command, so it replays its own frozen copy instead.
+                if resume_snapshot.get('auto'):
+                    messages = chat_resume_auto.inject_retained(messages, resume_snapshot, context, retained_anchor)
+                else:
+                    messages = chat_resume.inject_retained(messages, resume_snapshot, context, retained_anchor)
                 resume_context = ''
             elif auto_resume:
                 resume_context, resume_items = await asyncio.to_thread(
@@ -254,7 +258,7 @@ def routes(settings, services, auth):
                 if resume_context:
                     recall_state = 'auto_resume'
                     resume_snapshot = {'source_count':len(incoming), 'source_digest':context._turn_injection_messages_digest(incoming),
-                                       'context':resume_context, 'items':resume_items}
+                                       'context':resume_context, 'items':resume_items, 'auto':True}
                 else:
                     auto_resume = False
             if use_memory and query and resume_query is None and not auto_resume:

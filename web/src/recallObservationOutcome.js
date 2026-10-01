@@ -29,6 +29,7 @@ export function gatewayRequestLabel(payload) {
       : payload.recall_state === 'disabled' ? '自动召回已关闭，本轮未注入记忆'
       : payload.recall_state === 'no_match' ? '本轮没有选出可注入的记忆'
       : payload.recall_state === 'resume' ? '本轮使用续接上下文，没有执行自动召回'
+      : payload.recall_state === 'auto_resume' ? '本轮由新窗自动续接带入资料，没有执行自动召回'
       : '本轮未注入自动召回的记忆';
   }
   const reason = payload.recall_diagnostics?.reason;

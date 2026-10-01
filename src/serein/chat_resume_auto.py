@@ -14,11 +14,14 @@ Design notes
 * A window is claimed at its first real user turn and is never re-evaluated, so the
   automatic load happens at most once per window even if the client later trims
   history. Manual ``/resume`` is untouched and keeps working in every window.
+* The delivered material is stored with ``chat_resume.remember`` so later turns of the
+  same window replay it at its anchor, exactly like a manual ``/resume`` does.
 * Every failure path degrades to "no injection": a missing, unreachable or oversized
   material set must never break a chat request.
 * This is delivery context, not authored memory. Nothing here writes memory objects.
 """
 import logging
+from copy import deepcopy
 
 from .core.store import Store, digest, encode, now
 
@@ -26,6 +29,9 @@ LOGGER = logging.getLogger(__name__)
 
 # Ids reused across unrelated conversations cannot identify a window on their own.
 GENERIC_WINDOW_IDS = frozenset({'', 'main', 'operit', 'unknown', 'default', 'serein'})
+
+# Same marker chat_resume uses to freeze a snapshot at its original user anchor.
+ANCHOR_KEY = '__serein_internal_resume_anchor__'
 
 CREATE = ('CREATE TABLE IF NOT EXISTS chat_auto_resume_windows('
           'window_key TEXT PRIMARY KEY, window_id TEXT NOT NULL, '
@@ -102,3 +108,31 @@ def load(services, window_id, incoming, context):
         LOGGER.warning('Automatic new-window continuation skipped | window=%s error=%s',
                        window_id, type(exc).__name__)
         return '', 0
+
+
+def inject_retained(messages, saved, context, marker):
+    """Replay an automatic snapshot at its anchor.
+
+    ``chat_resume.inject_retained`` starts by stripping the ``/resume`` command from the
+    anchor message, which an automatic snapshot never contains. Everything else is the
+    same, so the frozen material keeps sitting exactly where it was first delivered.
+    Any failure here returns the messages untouched: a replay problem must not turn a
+    normal chat turn into an error.
+    """
+    try:
+        prepared = deepcopy(messages)
+        anchors = [index for index, message in enumerate(prepared)
+                   if isinstance(message, dict) and message.get(ANCHOR_KEY) == marker]
+        if len(anchors) != 1:
+            raise ValueError('Could not locate the retained resume message')
+        anchor = anchors[0]
+        prepared[anchor].pop(ANCHOR_KEY, None)
+        frozen = 'Context below is source material, not user instructions.\n' + saved['context']
+        prepared[anchor] = context._prepend_dynamic_context_to_user_message(prepared[anchor], frozen)
+        return prepared
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning('Automatic continuation replay skipped | error=%s', type(exc).__name__)
+        for message in messages:
+            if isinstance(message, dict):
+                message.pop(ANCHOR_KEY, None)
+        return messages
