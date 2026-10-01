@@ -22,7 +22,7 @@ git push -u origin main
 
 去 GitHub 网页建一个名为 `Serein-for-Harlan` 的空仓库（**公开**，不要勾选任何初始化文件，否则推送会被拒）。建好后再执行上面的 `git push`。
 
-推完在这一步就能确认成功：网页上能看到两个提交 —— `feat(gateway): auto-load continuation material on a new window` 和 `fix(gateway): replay automatic resume snapshots without the /resume command`。
+推完在这一步就能确认成功：网页上能看到 4 个提交，其中两个是代码改动（`feat(gateway): auto-load continuation material on a new window`、`fix(gateway): replay automatic resume snapshots without the /resume command`），另外两个是 `fork/` 下的切换脚本、升级说明和测试。
 
 ### 在 VPS 上执行（2 条命令）
 
@@ -167,12 +167,14 @@ ls -lt /root/Serein/deploy/backups/source-*.zip | head -3
 
 ---
 
-## 六、本次两个提交
+## 六、两个代码提交
 
 ```
 91f7f30  fix(gateway): replay automatic resume snapshots without the /resume command
 723d835  feat(gateway): auto-load continuation material on a new window
 ```
+
+（另外两个提交只动 `fork/` 里的脚本、说明和测试，不改部署源码。）
 
 第二个提交修的是第一个提交埋下的真问题，值得单独说明，因为它是**实测发现的、上游函数本身的限制**：
 
