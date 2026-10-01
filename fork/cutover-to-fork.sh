@@ -7,10 +7,15 @@
 #   bash cutover-to-fork.sh --apply            # 执行（更新器默认先备份数据）
 #   bash cutover-to-fork.sh --apply --skip-data-backup
 #   bash cutover-to-fork.sh --apply --force    # 仅当体检报“源码漂移”时使用，见 UPGRADE.md
+#   bash cutover-to-fork.sh --updater-file /tmp/x.py
+#                                              # 用本地文件代替下载。VPS 访问不了
+#                                              # raw.githubusercontent.com 时走这条。
+#   bash cutover-to-fork.sh --apply --screen    # 把自己放进 screen 再执行，掉线不断
 #
 # 幂等：重复执行只会在第 2、3 步发现“已经切过了”并跳过。
 #
 set -euo pipefail
+ORIG_ARGS=("$@")
 
 FORK_OWNER="otaku2244"
 FORK_REPO="Serein-for-Harlan"
@@ -24,14 +29,23 @@ RAW_UPDATER="https://raw.githubusercontent.com/${FORK_SLUG}/${FORK_BRANCH}/${UPD
 APPLY=0
 DATA_BACKUP=1
 FORCE=0
-for arg in "$@"; do
-  case "$arg" in
+SCREEN=0
+UPDATER_FILE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --apply)             APPLY=1 ;;
     --skip-data-backup)  DATA_BACKUP=0 ;;
     --force)             FORCE=1 ;;
-    -h|--help)           sed -n '2,14p' "$0"; exit 0 ;;
-    *) printf '未知参数：%s\n' "$arg" >&2; exit 2 ;;
+    --screen)            SCREEN=1 ;;
+    --updater-file)
+      shift
+      UPDATER_FILE="${1:-}"
+      [ -n "$UPDATER_FILE" ] || { printf '%s\n' '--updater-file 后面要跟一个文件路径' >&2; exit 2; }
+      ;;
+    -h|--help)           sed -n '2,15p' "$0"; exit 0 ;;
+    *) printf '未知参数：%s\n' "$1" >&2; exit 2 ;;
   esac
+  shift
 done
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -52,6 +66,21 @@ if [ "$APPLY" != 1 ]; then
   printf '确认无误后加 --apply 执行。\n'
 fi
 
+# 执行模式下转进 screen：中途要停服重建，SSH 掉线不能把构建打断在半路。
+# STY 由 screen 自己设置，所以进去之后不会再转一次。
+if [ "$SCREEN" = 1 ] && [ "$APPLY" = 1 ] && [ -z "${STY:-}" ]; then
+  if ! command -v screen >/dev/null 2>&1; then
+    printf '\n   [注意] 这台机器没装 screen，本次直接执行；请不要关窗口、不要断网。\n'
+  elif [ ! -t 0 ]; then
+    printf '\n   [注意] 当前输入不是终端，本次直接执行；请不要关窗口、不要断网。\n'
+  else
+    SESSION="cutover-${STAMP}"
+    printf '\n   \033[1m转入 screen 会话 %s\033[0m\n' "$SESSION"
+    printf '   若中途掉线：重新登录后执行  screen -r %s  可回到这里。\n\n' "$SESSION"
+    exec screen -S "$SESSION" bash "$0" "${ORIG_ARGS[@]}"
+  fi
+fi
+
 # ─────────────────────────────────────────────── 0. 环境
 say "0/6 环境检查"
 [ "$(id -u)" = "0" ] || die "请用 root 运行（需要读写 ${ROOT} 和操作 Docker）。"
@@ -62,12 +91,18 @@ say "0/6 环境检查"
 command -v git >/dev/null 2>&1 || die "缺少 git，更新器需要它。"
 command -v python3 >/dev/null 2>&1 || die "缺少 python3，管理菜单需要它。"
 FETCH=""
-if   command -v curl >/dev/null 2>&1; then FETCH="curl"
-elif command -v wget >/dev/null 2>&1; then FETCH="wget"
-else die "缺少 curl 或 wget，无法取回新更新器。"
+if [ -z "$UPDATER_FILE" ]; then
+  if   command -v curl >/dev/null 2>&1; then FETCH="curl"
+  elif command -v wget >/dev/null 2>&1; then FETCH="wget"
+  else die "缺少 curl 或 wget，取不回新更新器；也可以改用 --updater-file 指定本地文件。"
+  fi
 fi
 ok "安装目录 $ROOT"
-ok "取回工具 $FETCH"
+if [ -n "$UPDATER_FILE" ]; then
+  ok "更新器来源 本地文件 $UPDATER_FILE"
+else
+  ok "更新器来源 下载（$FETCH）"
+fi
 
 # ─────────────────────────────────────────────── 1. fork 可达
 say "1/6 确认 fork 已推送且可读"
@@ -152,15 +187,25 @@ esac
 # ─────────────────────────────────────────────── 3. 取回新更新器
 say "3/6 取回指向 fork 的更新器"
 TMP="$(mktemp)"
-if [ "$FETCH" = "curl" ]; then
-  curl -fsSL --max-time 60 "$RAW_UPDATER" -o "$TMP" || die "下载失败：$RAW_UPDATER"
+if [ -n "$UPDATER_FILE" ]; then
+  [ -f "$UPDATER_FILE" ] || die "找不到 --updater-file 指定的文件：$UPDATER_FILE"
+  cp "$UPDATER_FILE" "$TMP" || die "读取 $UPDATER_FILE 失败"
 else
-  wget -q -T 60 -O "$TMP" "$RAW_UPDATER" || die "下载失败：$RAW_UPDATER"
+  if [ "$FETCH" = "curl" ]; then
+    curl -fsSL --max-time 60 "$RAW_UPDATER" -o "$TMP" || die "下载失败：$RAW_UPDATER
+        这台机器可能访问不了 raw.githubusercontent.com。改成本地文件即可：
+          把 Serein-for-Harlan 里的 scripts/upstream_update.py 传上来，然后
+          bash $0 --updater-file /tmp/upstream_update.py"
+  else
+    wget -q -T 60 -O "$TMP" "$RAW_UPDATER" || die "下载失败：$RAW_UPDATER
+        这台机器可能访问不了 raw.githubusercontent.com。改成本地文件即可：
+          bash $0 --updater-file /tmp/upstream_update.py"
+  fi
 fi
 grep -q "REPOSITORY = '${FORK_SLUG}'" "$TMP" \
-  || die "下载到的更新器指向的不是 ${FORK_SLUG}，已放弃替换。"
+  || die "取到的更新器指向的不是 ${FORK_SLUG}，已放弃替换。"
 python3 -c 'import ast,sys; ast.parse(open(sys.argv[1],encoding="utf-8").read())' "$TMP" \
-  || die "下载到的更新器语法不通过，已放弃替换。"
+  || die "取到的更新器语法不通过，已放弃替换。"
 # Windows 版 sha256sum 会在文件名含反斜杠时给整行加转义前缀，先去掉再取前 16 位。
 ok "已取回并校验：$(sha256sum "$TMP" | tr -d '\\' | cut -c1-16)…  指向 ${FORK_SLUG}"
 

@@ -11,44 +11,57 @@
 
 作用：把安装目录的更新来源，从「原作者仓库」改成「你自己的仓库」。
 
-### 前置动作（在本地这台电脑做，1–3 分钟）
+### 第 1 步：把本地代码推到 GitHub
+
+远端已经配好了（`origin` = 你的仓库，`upstream` = 原作者仓库，后者要留着才能跟进上游更新），**只差推送**：
+
+```
+双击  E:\workbuddy\2026-09-21-20-44-34\Serein-fork\fork\push-to-fork.cmd
+```
+
+或者在任意终端里：
 
 ```bash
 cd E:\workbuddy\2026-09-21-20-44-34\Serein-fork
-git remote rename origin upstream                                   # 原作者的仓库改名叫 upstream
-git remote add origin https://github.com/otaku2244/Serein-for-Harlan.git
 git push -u origin main
 ```
 
-去 GitHub 网页建一个名为 `Serein-for-Harlan` 的空仓库（**公开**，不要勾选任何初始化文件，否则推送会被拒）。建好后再执行上面的 `git push`。
+推送时会要求登录 GitHub。推完网页上应能看到 4 个提交，其中两个是代码改动（`feat(gateway): auto-load continuation material on a new window`、`fix(gateway): replay automatic resume snapshots without the /resume command`），另外两个是 `fork/` 下的工具与文档。
 
-推完在这一步就能确认成功：网页上能看到 4 个提交，其中两个是代码改动（`feat(gateway): auto-load continuation material on a new window`、`fix(gateway): replay automatic resume snapshots without the /resume command`），另外两个是 `fork/` 下的切换脚本、升级说明和测试。
+> 这台电脑上没有任何 GitHub 凭据（无 `~/.git-credentials`、凭据管理器里也没有条目），所以推送必须由你本人完成。
 
-### 在 VPS 上执行（2 条命令）
+### 第 2 步：切换到 fork
 
-```bash
-screen -S cutover                                   # 建个会话，防止 SSH 掉线打断构建
-bash <(curl -fsSL https://raw.githubusercontent.com/otaku2244/Serein-for-Harlan/main/fork/cutover-to-fork.sh)
+```
+双击  E:\workbuddy\2026-09-21-20-44-34\Serein-fork\fork\serein-cutover.cmd
 ```
 
-第一条命令走完是**体检**，只读，不动任何文件。它会打印 fork 的提交号、当前源码和更新记录是否一致、以及接下来「将执行」的每一条动作。看清了再执行第二条：
+它会先把两个文件传到 VPS，再让你选：`1` 只体检（只读）、`2` 直接执行、`3` 放进 screen 执行。**先选 1**，看清报告再回来选 2 或 3。
+
+等价的手工命令（不依赖批处理，最保底）：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/otaku2244/Serein-for-Harlan/main/fork/cutover-to-fork.sh) --apply
+cd E:\workbuddy\2026-09-21-20-44-34\Serein-fork
+scp fork/cutover-to-fork.sh root@154.21.200.74:/tmp/serein-cutover.sh
+scp scripts/upstream_update.py root@154.21.200.74:/tmp/serein-updater.py
+ssh -t root@154.21.200.74 "bash /tmp/serein-cutover.sh --updater-file /tmp/serein-updater.py"                  # 体检
+ssh -t root@154.21.200.74 "bash /tmp/serein-cutover.sh --updater-file /tmp/serein-updater.py --apply --screen" # 执行
 ```
 
-想跳过数据备份（更新器默认会先备份一次运行数据）就加 `--skip-data-backup`。
+**为什么要先把文件传上去、而不是在 VPS 上 `curl` 下载**：这个脚本默认从 `raw.githubusercontent.com` 取新更新器，而国内 VPS 经常访问不了这个域名（`github.com` 本身却通常是通的 —— 你现在能跑 `se → 1` 就证明通）。`--updater-file` 就是绕开它的通道。切换完成之后，日常更新走的是 `git fetch https://github.com/otaku2244/Serein-for-Harlan.git`，不经过 `raw.githubusercontent.com`，所以不受影响。
 
-> 为什么用 `screen`：切换过程中会停服、重建两个镜像，耗时和首次构建同量级。SSH 掉线会让构建半途中断，而服务此刻是停着的。
+`--screen` 是让脚本在 VPS 上把自己放进 screen 再执行 —— 中途要停服重建，SSH 掉线不能把构建打断在半路。机器没装 screen 时它会自己降级成直接跑，并提醒你别关窗口。用 `--apply` 时建议带上。
+
+想跳过数据备份（更新器默认会先备份一次运行数据）就在 `--apply` 后面再加 `--skip-data-backup`。
 
 ### 脚本的 6 个步骤各自做什么
 
 | 步 | 动作 | 可回滚性 |
 |---|---|---|
-| 0 | 体检环境：root、安装目录、git、python3、curl | 只读 |
+| 0 | 体检环境：root、安装目录、git、python3、取文件的方式 | 只读 |
 | 1 | 读 fork 的 `main` 提交号；读不到就中止并给出推送命令 | 只读 |
 | 2 | **关键门禁**：核对磁盘源码与 `update-state.json` 记录的哈希是否完全一致 | 只读 |
-| 3 | 取回 fork 版更新器到临时文件，校验它确实指向本 fork、且语法通过，才继续 | 只读 |
+| 3 | 取回 fork 版更新器（`--updater-file` 指定就用本地文件，否则下载），校验它确实指向本 fork、且语法通过，才继续 | 只读 |
 | 4 | 备份 `update-state.json` → 把 `.git` 改名摘掉 → 替换更新器 | 全部只改名/备份，可还原 |
 | 5 | 跑 `se → 1`（程序化喂两个选项：菜单 1、备份 1） | 更新器自带源码 zip 备份 |
 | 6 | 独立校验结果：台账、容器、新模块是否真的到位 | 只读 |
@@ -163,7 +176,8 @@ ls -lt /root/Serein/deploy/backups/source-*.zip | head -3
 - **指纹兜底只在窗口 ID 不具体时生效。** 客户端如果送唯一 ID，Serein 就认 ID，两条长得一样的第一句话会被当成两个窗口 —— 这是想要的。
 - **续接资料存在 `chat_resume_contexts` 表里，窗口 ID 仍然是客户端给的那个原始值**（比如 `operit`），每个窗口 ID 最多保留 8 份。这是上游原有机制，我没动。指纹只用来判断「这是不是新窗口」。
 - **客户端把动态状态塞进 system 提示词时，第二轮可能匹配不上前缀**（`retained()` 用的是前缀摘要比对）。匹配不上就老老实实不注入，不会出错 —— 只是那一轮拿不到续接资料。Operit 的【吧台现状】这类动态块属于这种情况。
-- **安装／更新路径上没有第二处写死仓库地址。** 全仓库搜 `github.com` 只剩三类命中：`scripts/upstream_update.py`（就是我们要的那处，随每次更新自替换）、`web/package-lock.json` 里 npm 包的赞助信息、`README.md` 顶部一个徽章链接 —— 后两类与安装无关。而 `manage.py` 的部署流程是从本地源码目录构建的，不做 git clone，所以全新安装装出来的也是 fork 版本。
+- **两个 `.cmd` 只是省事的壳子。** 它们编码和跳转都静态校验过（UTF-8 无 BOM、LF、标签全部对得上），但**没有在本机实际跑过** —— 当前环境的沙箱禁止调用 `cmd.exe`。真正做事的逻辑全在 `cutover-to-fork.sh` 里，那个脚本的每个分支都在本机实测过。所以批处理万一有毛病，上面「等价的手工命令」永远可用。
+- **安装／更新路径上没有第二处写死仓库地址。** 全仓库搜 `github.com` 一共 8 处，只有 `scripts/upstream_update.py` 一处参与机制（它就是我们要替换的那个，之后随每次更新自替换）。其余全是文档与帮助链接，与安装无关：`README.md` 的徽章、`web/package-lock.json` 的 npm 赞助信息、`docs/interactive-install.md` 的 Termux 说明、`docs/paper/manuscript.zh-CN.md` 的引用、`web/src/components/UsageGuide.jsx` 里指向上游仓库文档的帮助链接（这两条会继续指向上游 —— 上游文档描述的就是这套代码，指过去是对的）。另外 `manage.py` 的部署流程是从本地源码目录构建、不做 git clone，所以全新安装装出来的也是 fork 版本。
 
 ---
 
