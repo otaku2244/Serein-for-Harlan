@@ -98,6 +98,10 @@ git merge upstream/main
 
 合并时唯一要小心的：`release-files.json`。它是一份纯文件名清单，**上游新增的文件名和我加的那个都要留着**，别合丢。
 
+合完先跑一次 `python3 fork/test_chat_resume_auto.py`。它会当场告出上游是否动了补丁依赖的接口（比如 `inject_retained`、快照字典的键、`_prepend_dynamic_context_to_user_message`）。全绿再推。
+
+> `fork/` 目录（这一个测试、切换脚本、本文档）**不在** `release-files.json` 里，所以它只是跟着 git 走，更新器不会把它当成部署源码、也不会往 VPS 上写。部署源码始终是 529 个文件。
+
 合完推上去，然后上 VPS 跑 `se → 1`，它会从你的 fork 拉全部源码并重建。之后 `se → 1` 永久自洽：
 
 - 你的 fork 没有新提交 → 提示「当前已是 main 最新提交」，不重建；
@@ -185,4 +189,12 @@ ls -lt /root/Serein/deploy/backups/source-*.zip | head -3
 
 修法是给自动快照走一条自己的注入路径（`chat_resume_auto.inject_retained`）：逻辑完全一致，只是不做命令剥离，并且**任何失败都返回原消息、同时把内部锚点标记清掉**（否则这个内部键会漏进发给上游模型的消息体里）。手动 `/resume` 的路径一行没碰。
 
-验证方式：48 项断言全部通过，覆盖窗口指纹、首次认领、注入量超限降级、锚点缺失降级、标记不泄漏、list 型 content 处理，以及上面那 4 项对上游行为的对照。测试跑在本机的隔离环境里（`core/` 是纯标准库，所以能脱离容器直接跑真实的补丁模块），`chat_resume` 用桩件替身，并且把上游那个 `inject_retained` 设成「一旦被调用就报错」的毒丸 —— 用来证明自动路径绝不会走回上游函数。
+验证方式：`fork/test_chat_resume_auto.py`，45 项断言全部通过。
+
+```bash
+python3 fork/test_chat_resume_auto.py
+```
+
+它不依赖容器、不依赖第三方库 —— `src/serein/core/` 是纯标准库，所以它自己搭一个临时包、把**真实的补丁模块**装进去直接跑，只有 `chat_resume` 用桩件替身。测试覆盖窗口指纹、首次认领、注入量超限降级、锚点缺失降级、内部标记不泄漏、list 型 content 处理，以及上面那 4 项对上游行为的对照。
+
+桩件里的 `inject_retained` 和 `remember` 都是「一旦被调用就报错」的毒丸 —— 正因为如此，只要自动路径哪天误走回上游函数，整个测试会直接崩，不可能悄悄放过。
