@@ -17,6 +17,19 @@ const reviewKeys = [
 ];
 
 
+// Self-review is the model's own report about its draft, not a host verdict.
+// Only these three describe a truthfulness break that must never reach the
+// reader; the rest are writing-quality hints and are surfaced as warnings.
+const hardReviewKeys = ["source_bound", "identity_correct", "dates_preserved"];
+
+const reviewWarnings = (review, issues) => {
+  const failed = reviewKeys.filter(key => !review[key]);
+  return [
+    ...failed.map(key => `自检未通过：${key}`),
+    ...issues.map(issue => `模型自述：${issue}`),
+  ];
+};
+
 export const narrativeModelForMode = (mode) => {
   if (!new Set(["update", "rewrite"]).has(mode)) throw new Error("invalid_narrative_writer_mode");
   const model = process.env.SEREIN_WRITER_MODEL;
@@ -83,13 +96,20 @@ export function normalizeNarrativeWriterResult(value) {
   }
   const body = result.body.trim();
   const issues = result.issues.map((item) => item.trim()).filter(Boolean);
-  if (result.evidence_sufficient && (!body || issues.length || reviewKeys.some((key) => !review[key]))) {
-    throw new Error("narrative_writer_sufficient_result_invalid");
+  if (result.evidence_sufficient) {
+    // A sufficient verdict must carry real prose; a hard self-review break is
+    // still rejected. Everything else the model flagged about its own draft is
+    // a hint, not grounds for throwing away a finished body.
+    if (!body || hardReviewKeys.some((key) => !review[key])) {
+      throw new Error("narrative_writer_sufficient_result_invalid");
+    }
+    return { ...result, body, issues, self_review: { ...review }, review_warnings: reviewWarnings(review, issues) };
   }
-  if (!result.evidence_sufficient && (body || !issues.length || review.source_bound)) {
-    throw new Error("narrative_writer_insufficient_result_invalid");
-  }
-  return { ...result, body, issues, self_review: { ...review } };
+  // An insufficient verdict means "these materials cannot carry a body". Keep
+  // the issues so the dashboard can explain why, and drop any prose the model
+  // wrote anyway instead of discarding the whole run.
+  if (!issues.length) issues.push("模型自述材料不足，但未给出具体原因。");
+  return { ...result, body: "", issues, self_review: { ...review }, review_warnings: reviewWarnings(review, issues) };
 }
 
 export function narrativeBodyDiff(currentBody, proposedBody) {

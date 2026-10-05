@@ -41,6 +41,7 @@ export function NarrativePage() {
   const [previewDiff, setPreviewDiff] = useState("");
   const [previewMode, setPreviewMode] = useState("");
   const [previewError, setPreviewError] = useState("");
+  const [previewWarnings, setPreviewWarnings] = useState([]);
   const [previewing, setPreviewing] = useState(false);
   const [writingNew, setWritingNew] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -98,6 +99,7 @@ export function NarrativePage() {
     setPreviewDiff("");
     setPreviewMode("");
     setPreviewError("");
+    setPreviewWarnings([]);
     setSaveMessage("");
     setMaterialIds(null);
     setPreviewSeal(null);
@@ -111,6 +113,7 @@ export function NarrativePage() {
     setPreviewDiff("");
     setPreviewMode("");
     setPreviewError("");
+    setPreviewWarnings([]);
     setSaveMessage("");
     setMaterialIds(selectedRoll?.materialIds || null);
     setPreviewSeal(null);
@@ -123,6 +126,7 @@ export function NarrativePage() {
     setPreviewDiff("");
     setPreviewMode("");
     setPreviewError("");
+    setPreviewWarnings([]);
     setSaveMessage("");
     setMaterialIds(null);
     setPreviewSeal(null);
@@ -138,6 +142,7 @@ export function NarrativePage() {
     setPreviewMode(mode);
     setPreviewing(true);
     setPreviewError("");
+    setPreviewWarnings([]);
     setSaveMessage("");
     setPreviewSeal(null);
     try {
@@ -152,6 +157,7 @@ export function NarrativePage() {
       setPreviewBody(result.body);
       setPreviewDiff(result.diff || "");
       setPreviewMode(mode);
+      setPreviewWarnings(result.review_warnings || []);
       setMaterialIds(result.proposed_material_ids);
       setPreviewSeal(result);
       return result;
@@ -536,6 +542,12 @@ export function NarrativePage() {
                       spellCheck="false"
                     />
                     {previewError ? <p className="narrative-editor__error" role="alert">{previewError}</p> : null}
+                    {previewWarnings.length ? (
+                      <details className="narrative-editor__warnings">
+                        <summary>Writer 自检提示 {previewWarnings.length} 条（不影响保存，可自行核对）</summary>
+                        <ul>{previewWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+                      </details>
+                    ) : null}
                     {saveMessage ? <p className="narrative-editor__saved" role="status">{saveMessage}</p> : null}
                   </div>
                   <aside className="narrative-editor__materials" aria-label="当前绑定材料">

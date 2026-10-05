@@ -3483,6 +3483,17 @@ label:has(input:focus-visible) {
   font-size: 11px;
   line-height: 1.7;
 }
+.narrative-editor__warnings {
+  margin: 12px 0 0;
+  color: #64746e;
+  font-family: var(--font-editorial-cjk);
+  font-size: 10px;
+  line-height: 1.7;
+}
+.narrative-editor__warnings ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
 .narrative-editor__saved {
   margin: 12px 0 0;
   color: #64746e;
