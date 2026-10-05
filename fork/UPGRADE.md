@@ -135,7 +135,7 @@ git fetch upstream
 git merge upstream/main
 ```
 
-本分支只在 9 个文件上有差异，其中 6 个是上游文件（冲突只会出在这几行的附近）：
+本分支只在 10 个文件上有差异，其中 7 个是上游文件（冲突只会出在这几行的附近）：
 
 | 文件 | 我改了什么 |
 |---|---|
@@ -144,12 +144,15 @@ git merge upstream/main
 | `src/serein/deployment.py` | `DEFAULT_FEATURES` 加一个键 `auto_resume: False` |
 | `web/src/components/FeatureSettings.jsx` | 加一行开关说明 |
 | `web/src/recallObservationOutcome.js` | 加一行状态文案 |
-| `src/serein/extensions/pipeline.py` | 12 行：给 `bind_transcriptions` 多传一个 `reference` |
+| `src/serein/extensions/pipeline.py` | 12 行：给 `bind_transcriptions` 多传一个 `reference`；1 行：把纠错文案换成作者自己写的修复版本 |
 | `src/serein/extensions/pipeline_images.py` | 53 行：`bind_transcriptions` 接受 `reference`，按 `sha256` 对号绑定转录 |
+| `src/serein/extensions/pipeline_latest.py` | 7 行：给 writer 的 user 提示加一条真实成品风格范例 |
 | `scripts/upstream_update.py` | 只改 `REPOSITORY` 常量一行 |
 | `release-files.json` | 加一个文件名 |
 
 后两组是两件独立的事：`chat_resume_auto` 那组是开窗自动续接；`pipeline*.py` 那组修的是「`pretranscribed` 路径下，curator 拿到的图片转录可能和原图对不上号」——上游 `68d83e3` 时仍未修，所以补丁继续保留。
+
+`pipeline_latest.py` 和 `pipeline.py` 的纠错行是后来为了治「Event 写成流水账」加的：writer 的 user 提示原本只给了一个 JSON 骨架，`event_draft` 是个占位符，模型模仿不到真正的正文写法；纠错文案原为「不按词句数量改写文风」，反而阻止了压缩。两处都见第六节。
 
 合并时唯一要小心的：`release-files.json`。它是一份纯文件名清单，**上游新增的文件名和我加的那个都要留着**，别合丢。
 
@@ -226,15 +229,21 @@ ls -lt /root/Serein/deploy/backups/source-*.zip | head -3
 
 ---
 
-## 六、三个代码提交
+## 六、四个代码提交
 
 ```
 91f7f30  fix(gateway): replay automatic resume snapshots without the /resume command
 723d835  feat(gateway): auto-load continuation material on a new window
 0d208bd  fix(fork): bind curator transcriptions to the pretranscribed receipts
+0ac0c7a  feat(writer): show the writer a real finished Event, and restore the author's repair wording
 ```
 
 （其余提交只动 `fork/` 里的脚本、说明和测试，不改部署源码。）
+
+第四个（`0ac0c7a`）治的是「Event 写成流水账」。两处改动：
+
+- **`pipeline_latest.build_event_writer_prompt`**：writer 的 user 提示里，原先唯一的样例是一段 JSON 骨架，其中 `event_draft` 是占位符 `"把旧书放回书架。"` —— 只示范了格式，没示范正文写法。而文体规则只写在 system 层的 `AGENTS.md`，离得太远，模型模仿的其实是 user 提示。这里补一条真实成品 Event（109 字，技术兼生活题材，通篇没有「我说／她说」）作为风格范例，并明确标注它不属于本轮来源、不要复用其中内容。
+- **`pipeline.py` 的纠错文案**：原先只写「不按词句数量改写文风」，等于在超长时告诉模型别压缩，日志里因此出现 1638→1542、2092→1540 这种只删字不删内容的反复。改成作者自己写在 `build_event_writer_repair_prompt()` 里的那套措辞（「优先压缩逐轮复述、技术背景、旁支和重复解释，仍须保留关键依据、不同表达、真实转折与实际落点」），同时保留 pipeline 实际拥有的 `validation_error` / `allowed_ids` 载荷。
 
 前两个解决的是同一个问题，见下。第三个修的是另一件事：`pretranscribed` 路径下，host 已经按原图字节校验并落库了转录，但归线阶段仍然按「第几张图」的位置去配对，一旦这一批里混进别的图，curator 手上的转录就和原图错位。修法是让 `bind_transcriptions` 收一份 `reference`（`source_message_id` + `position` + `sha256`），按摘要对号入座；没给 `reference` 时行为完全不变。
 
