@@ -759,7 +759,17 @@ def validate(request,output):
             assignments,_,_=normalize_event_track_message_output(output,request['messages'],request['active_tracks'],session_id='validate',next_track_ordinal=1)
             routing_units(request['messages'],assignments)
         elif role=='event_curator':
-            bound=bind_transcriptions(output,request.get('images',[]))
+            # Pretranscribed requests already carry host-verified receipts: the
+            # model is not asked to transcribe, so an absent transcription list
+            # is valid. Validate against the receipts only when the model echoes
+            # one back, so both shapes bind to the same frozen images.
+            reference=None
+            if request.get('pretranscribed'):
+                reference=[{key:item[key] for key in ('source_message_id','position','sha256','evidence_role')}
+                           for item in request.get('curator_image_transcriptions') or []]
+                if 'image_transcriptions' not in output:
+                    reference=None
+            bound=bind_transcriptions(output,request.get('images',[]),reference)
             component={**request['component']}
             if bound:
                 component['curator_image_transcriptions']=bound
