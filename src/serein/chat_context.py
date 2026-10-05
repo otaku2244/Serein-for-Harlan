@@ -76,6 +76,17 @@ EXTERNAL_CONTEXT_BLOCK_TITLES = {
     "Relationship Weather",
     "Care Memo",
     "Care Reminder",
+    "积温·此刻",
+    "积温·找她",
+    "积温·独处",
+}
+
+# 积温桥在整段积温内容之后补的一行固定收尾。它以【】开头，所以会被
+# _strip_external_context_blocks 当成“非名单标题行”原样留下；必须单独识别并丢弃，
+# 否则这一行会漏进归档和检索 query。块尾标记本身不是块标题，不能加进上面那个集合——
+# 那会让 skipping 一直为真，把紧随其后的用户原话整段吞掉（本函数不把空行当出块信号）。
+EXTERNAL_CONTEXT_BLOCK_END_MARKERS = {
+    "此状态为潜意识的底色沉淀，自然浸润在回应里，不作任何元说明或刻意提及。",
 }
 
 OPERIT_STABLE_CONTEXT_TITLES = {
@@ -336,6 +347,10 @@ class ClientContext:
             if stripped.startswith("【") and "】" in stripped:
                 title = stripped[1 : stripped.index("】")].strip()
             if title:
+                if title in EXTERNAL_CONTEXT_BLOCK_END_MARKERS:
+                    # 块尾标记：结束跳过状态，并且这一行本身也不保留。
+                    skipping = False
+                    continue
                 skipping = title in EXTERNAL_CONTEXT_BLOCK_TITLES
                 if skipping:
                     kept.extend(marker for marker in protected_markers if marker in line)
