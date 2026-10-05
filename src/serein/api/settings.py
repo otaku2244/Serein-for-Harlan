@@ -162,6 +162,7 @@ class ResumePatch(BaseModel):
     mode: Literal['command','mcp'] | None = None
     latest_shadow: bool | None = None
     recent_events: bool | None = None
+    recent_event_limit: int | None = Field(default=None, ge=1, le=50, strict=True)
     favorite_scenes: bool | None = None
     selected_memories: bool | None = None
     recent_originals: bool | None = None

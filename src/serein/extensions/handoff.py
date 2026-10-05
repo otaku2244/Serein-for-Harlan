@@ -13,6 +13,7 @@ MAX_ITEMS = 500
 MAX_COLLECTION_CHARS = 2_000_000
 MAX_CURSOR_CHARS = 120
 MAX_PAGE_BYTES = 224 * 1024
+MAX_SECTION_ITEMS = 50
 
 # An Event is written by an archive batch, so documents.created_at is the moment
 # that batch ran. Opening a window on a backlog archived days later would then
@@ -83,7 +84,7 @@ def factory(services, options):
             return {'key':key,'revision':revision,'status':'saved'}
 
     def resume(window_id: str = 'main', cursor: str = '', handoff_key: str = '', source_session_id: str = '', selection: dict | None = None):
-        """Read selected continuity sections: latest shadow, ten recent Events, favorite Scenes, selected memories, recent originals and pending originals. Call with no arguments to start; window_id is optional and defaults to main. Pass next_cursor as cursor until all pages are read; do not rewrite a portrait."""
+        """Read selected continuity sections: latest shadow, recent Events, favorite Scenes, selected memories, recent originals and pending originals. recent_event_limit and recent_original_limit set how many each section carries (1-50). Call with no arguments to start; window_id is optional and defaults to main. Pass next_cursor as cursor until all pages are read; do not rewrite a portrait."""
         from ..deployment import read_settings
         from ..compat.window_shadows import latest_shadow
         state = read_settings(database)
@@ -92,6 +93,9 @@ def factory(services, options):
         selection={**state['resume'],**overrides}
         if overrides.get('recent_originals') is True:selection['pending_originals']=False
         elif overrides.get('pending_originals') is True:selection['recent_originals']=False
+        event_limit=selection['recent_event_limit']
+        if type(event_limit) is not int or not 1 <= event_limit <= MAX_SECTION_ITEMS:
+            raise ValueError('resume.recent_event_limit must be an integer between 1 and %d' % MAX_SECTION_ITEMS)
         if not isinstance(cursor,str) or len(cursor)>MAX_CURSOR_CHARS:
             raise ValueError('Invalid resume cursor')
         if any(not isinstance(value,str) or len(value)>200 for value in (window_id,handoff_key,source_session_id)):
@@ -142,7 +146,7 @@ def factory(services, options):
                     recent_events.append({'id':row['id'],'kind':'event','section':'recent_event',
                         'title':doc['title'],'revision':doc['revision'],'body_md':doc['body_md'],
                         'created_at':row['occurred_at'] or doc['created_at']})
-                    if len(recent_events)==10:break
+                    if len(recent_events)==event_limit:break
             favorite_ids={d['id'] for d in documents}
             documents.extend(item for item in reversed(recent_events) if item['id'] not in favorite_ids)
             raw_ids=set()

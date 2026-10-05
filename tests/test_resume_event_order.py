@@ -46,3 +46,43 @@ def test_recent_events_ignore_unbound_evidence(settings):
 
     # The only evidence was retracted, so the occurrence time falls back to write time.
     assert page['items'][0]['created_at'] == '2026-01-05T00:00:00Z'
+
+
+@pytest.mark.parametrize('limit', [1, 3, 10, 25, 50])
+def test_recent_event_limit_is_honoured(settings, limit):
+    save_settings(settings.database, {'features': {'resume': True}})
+    with Store(settings.database) as store:
+        for index in range(12):
+            store.create(f'event-{index:02}', 'event', f'Event {index}', f'Body {index}',
+                         created_at=f'2026-01-{index + 1:02}T00:00:00Z')
+    resume = Application(settings).contributions.tools['resume']
+
+    assert resume('new')['total_recent_events'] == 10
+    assert resume('new', selection={'recent_event_limit': limit})['total_recent_events'] == min(limit, 12)
+
+
+def test_recent_event_limit_survives_a_saved_setting(settings):
+    save_settings(settings.database, {'features': {'resume': True}})
+    with Store(settings.database) as store:
+        for index in range(12):
+            store.create(f'event-{index:02}', 'event', f'Event {index}', f'Body {index}',
+                         created_at=f'2026-01-{index + 1:02}T00:00:00Z')
+    save_settings(settings.database, {'resume': {'recent_events': True, 'recent_event_limit': 4}})
+
+    # No selection passed: this is the path a chat /resume and the automatic
+    # new-window injection take, so the saved count has to be what they read.
+    page = Application(settings).contributions.tools['resume']('new')
+
+    assert page['total_recent_events'] == 4
+    assert page['event_ids'] == ['event-08', 'event-09', 'event-10', 'event-11']
+
+
+@pytest.mark.parametrize('limit', [0, 51, 'ten', 1.5, True])
+def test_recent_event_limit_outside_one_to_fifty_is_refused(settings, limit):
+    save_settings(settings.database, {'features': {'resume': True}})
+    with Store(settings.database) as store:
+        store.create('event', 'event', 'Event', 'Event body', created_at='2026-01-01T00:00:00Z')
+    resume = Application(settings).contributions.tools['resume']
+
+    with pytest.raises(ValueError, match='recent_event_limit'):
+        resume('new', selection={'recent_event_limit': limit})

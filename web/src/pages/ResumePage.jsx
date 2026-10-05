@@ -15,7 +15,8 @@ export function ResumePage({onOpenSettings}) {
   const version=useRef(0),previewVersion=useRef(0),request=useRef(null);
   const previewPanel=useRef(null),previewBody=useRef(null);
   const enabled=!!config?.features.resume;
-  const valid=!!selection&&Number.isInteger(selection.recent_original_limit)&&selection.recent_original_limit>=1&&selection.recent_original_limit<=50;
+  const inRange=value=>Number.isInteger(value)&&value>=1&&value<=50;
+  const valid=!!selection&&inRange(selection.recent_event_limit)&&inRange(selection.recent_original_limit);
   const dirty=!!config&&JSON.stringify(selection)!==JSON.stringify(config.resume);
   const last=pages.at(-1),items=resumeMaterials(pages);
   function cancelPreview(){previewVersion.current++;request.current?.abort();}
@@ -79,7 +80,7 @@ export function ResumePage({onOpenSettings}) {
         <div className="resume-actions"><button type="submit" disabled={!!busy||!dirty||!valid}>{busy==='saving'?'正在保存…':'保存选择'}</button><button type="button" disabled={!!busy} onClick={reload}>重新读取</button></div>
       </form><section ref={previewPanel} className="resume-preview" aria-labelledby="resume-preview-title">
         <header><div><p>当前选择会读到</p><h2 id="resume-preview-title">续接资料</h2></div><button type="button" disabled={!!busy||previewing||!valid} onClick={()=>preview()}>{previewing?'正在读取…':'重新预览'}</button></header>
-        {!valid&&<p className="resume-note">原话条数需填写 1–50 的整数，填好后会自动预览。</p>}
+        {!valid&&<p className="resume-note">事件与原话的条数都需填写 1–50 的整数，填好后会自动预览。</p>}
         {(dirty||!!pages.length)&&<p className="resume-note">{dirty&&'当前选择尚未保存。 '}{!!pages.length&&<>已读 {items.filter(item=>item.body_complete).length} / {last.total_items} 条 · {pages.length} 页{last.has_more?' · 还有资料':' · 已完整读取'}</>}</p>}
         <div ref={previewBody} className="resume-preview-scroll" tabIndex={0} role="region" aria-label="续接资料正文">
         {!pages.length?<div className="resume-empty"><p>一窗结束，另一窗接起。</p><span>{previewing?'正在读取当前选择…':'勾选要带走的内容，预览会自动更新。'}</span></div>:<>
