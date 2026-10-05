@@ -1,18 +1,62 @@
 """Authenticated client compatibility routes for the writable private service."""
 
+import json
+
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
 from ..compat.events import Events
 from ..compat.germany.fact_events import FactEventSettlementBlockedError
+from ..core.domains import canonical_domain
 from ..core.store import Store
 
 
-def event_surface_states(database,result):
-    with Store(database,read_only=True) as store:
-        for item in result.get('items',[]):
-            if item.get('item_type')=='event':
-                item['surface_state']=store.surface_state(item['item_id'])
+def domain_policies(database):
+    """Published domain rules, as (flat, per_kind).
+
+    Recall resolves a domain against ``domain_rules[kind]`` and only then falls
+    back to the flat ``domains`` map, so a label built from the per-kind map alone
+    would call a restricted domain "normal". Both maps must reach the client.
+    """
+    with Store(database, read_only=True) as store:
+        row = store.conn.execute(
+            "SELECT value_json FROM background_state WHERE name='deployment_settings'"
+        ).fetchone()
+    if not row:
+        return {}, {}
+    tagging = (json.loads(row[0]) or {}).get('tagging') or {}
+    flat = {item['key']: item.get('policy', 'normal')
+            for item in tagging.get('domains', []) if isinstance(item, dict) and item.get('key')}
+    return flat, (tagging.get('policies') or {})
+
+
+def effective_domain_policy(flat, per_kind, kind, domain):
+    """Mirror the resolution order in recall.scene.domain_rejection."""
+    rules = per_kind.get(kind) or {}
+    if domain in rules:
+        return rules[domain]
+    return flat.get(domain, 'normal')
+
+
+def event_surface_states(database, result):
+    """Attach surfacing state and the effective domain rule to every Event.
+
+    The stored manual_surface column and the published domain rule are two
+    separate gates: recall already rejects a domain before manual_surface is
+    consulted, so the client label must show both or it reports a stale
+    "auto surfaces" verdict for every Event in a restricted domain.
+    """
+    flat, per_kind = domain_policies(database)
+    with Store(database, read_only=True) as store:
+        for item in result.get('items', []):
+            if item.get('item_type') != 'event':
+                continue
+            item['surface_state'] = store.surface_state(item['item_id'])
+            document = store.read(item['item_id'])
+            domain = canonical_domain(document['metadata']) if document else None
+            item['canonical_domain'] = domain
+            item['domain_policy'] = effective_domain_policy(
+                flat, per_kind, item['item_type'], domain)
     return result
 
 

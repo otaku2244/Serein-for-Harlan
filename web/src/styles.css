@@ -1551,12 +1551,18 @@ label:has(input:focus-visible) {
   font-family: var(--font-editorial-cjk);
   font-size: 15px;
   line-height: 1.78;
+  /* Event prose carries real paragraph breaks; without this the browser
+     collapses the blank lines that separate them. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .scene-entry__excerpt.is-fact {
   margin-top: 2px;
   color: #303b37;
   font-size: clamp(18px, 1.65vw, 22px);
   line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .fact-event-timeline .scene-entry__button time { margin-bottom: 8px; }
 .fact-event-timeline .scene-entry__excerpt:not(.is-fact) { max-width: min(820px, calc(100% - 60px)); }

@@ -106,6 +106,26 @@ function factEventSourceCount(item) {
   return Number.isFinite(count) && count >= 0 ? count : 0;
 }
 
+const domainPolicyLabels = {
+  excluded: "域已排除，不自动浮现",
+  explicit_only: "仅明确召回",
+};
+
+function eventSurfaceLabel(item) {
+  if (item.status === "archived") return "已归档，不自动浮现";
+  if (item.surface_state?.reasons?.includes("covered_by_scene")) return "Scene 已覆盖，不自动浮现";
+  // Recall rejects the domain before manual_surface is consulted, so a
+  // restricted domain outranks the stored per-Event verdict.
+  const domainRule = item.domain_policy;
+  if (domainRule && domainRule !== "normal") {
+    const manual = item.recallable === false ? "，本条已关闭" : "";
+    return `${domainPolicyLabels[domainRule] || "域限制"}${manual}`;
+  }
+  if (item.recallable === true) return "可自动浮现";
+  if (item.recallable === false) return "不自动浮现";
+  return "召回资格未审核";
+}
+
 function readFactEventCache() {
   try {
     const payload = JSON.parse(window.localStorage.getItem(factEventCacheKey));
@@ -1389,7 +1409,7 @@ export function MemoryPage() {
                       <span className="scene-entry__meta">
                         <span><LinkSimple size={15} weight="light" aria-hidden="true" />{factEventSourceCount(item)} 条原文</span>
                         <span>{item.item_type === "event"
-                          ? item.status==='archived' ? '已归档，不自动浮现' : item.surface_state?.reasons?.includes("covered_by_scene") ? "Scene 已覆盖，不自动浮现" : item.recallable === true ? "可自动浮现" : item.recallable === false ? "不自动浮现" : "召回资格未审核"
+                          ? eventSurfaceLabel(item)
                           : "不参与普通召回"}</span>
                         {item.injection_count ? <span>已注入 {item.injection_count} 次</span> : null}
                       </span>
