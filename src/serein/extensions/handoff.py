@@ -14,6 +14,20 @@ MAX_COLLECTION_CHARS = 2_000_000
 MAX_CURSOR_CHARS = 120
 MAX_PAGE_BYTES = 224 * 1024
 
+# An Event is written by an archive batch, so documents.created_at is the moment
+# that batch ran. Opening a window on a backlog archived days later would then
+# surface whichever Events the writer happened to finish last, not the ones that
+# happened last: re-running the pipeline reshuffles the window even though the
+# conversations never moved. Order by the newest bound original instead, and
+# fall back to the write time for an Event that carries no binding at all.
+# strftime normalises both ISO forms (Z and +00:00) to one comparable UTC string.
+RECENT_EVENTS_SQL = (
+    "SELECT d.id AS id,COALESCE((SELECT MAX(json_extract(b.metadata_json,'$.created_at'))"
+    " FROM evidence_bindings b WHERE b.document_id=d.id AND b.active=1"
+    " AND json_extract(b.metadata_json,'$.created_at') IS NOT NULL),d.created_at) AS occurred_at"
+    " FROM documents d WHERE d.kind='event' AND d.lifecycle='active'"
+    " ORDER BY strftime('%Y%m%d%H%M%f',occurred_at) DESC,d.id DESC")
+
 
 class ResumeLimit(ValueError):
     pass
@@ -116,15 +130,18 @@ def factory(services, options):
                         documents.append({'id':key,'kind':doc['kind'],'section':'selected_memory','title':doc['title'],
                             'revision':doc['revision'],'body_md':doc['body_md'],'created_at':doc['created_at']})
                         existing_ids.add(key)
-            events = reader.store.conn.execute("SELECT id FROM documents WHERE kind='event' AND lifecycle='active' "
-                "ORDER BY created_at DESC,id DESC").fetchall()
+            events = reader.store.conn.execute(RECENT_EVENTS_SQL).fetchall()
             recent_events = []
             for row in (events if selection['recent_events'] else []):
                 obj = reader.read(row['id'], with_evidence=False)
                 if obj['readable'] and obj.get('document'):
                     doc = obj['document']
+                    # Report the occurrence time, not the batch time: a reader
+                    # told an Event "happened at 10-06 04:22" for a conversation
+                    # that ran on 09-23 will misjudge how fresh it is.
                     recent_events.append({'id':row['id'],'kind':'event','section':'recent_event',
-                        'title':doc['title'],'revision':doc['revision'],'body_md':doc['body_md'],'created_at':doc['created_at']})
+                        'title':doc['title'],'revision':doc['revision'],'body_md':doc['body_md'],
+                        'created_at':row['occurred_at'] or doc['created_at']})
                     if len(recent_events)==10:break
             favorite_ids={d['id'] for d in documents}
             documents.extend(item for item in reversed(recent_events) if item['id'] not in favorite_ids)
