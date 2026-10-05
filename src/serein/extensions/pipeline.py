@@ -1142,7 +1142,7 @@ async def job(database,batch,request,key,runner):
                 elif image:record_image_failure(database,image,error)
                 else:fail_stage(database,batch,identifier,error)
                 if (not image and (not received or not isinstance(error,ValueError))) or attempt==attempts-1:raise
-                correction='\n请按原角色规则纠正结构或证据校验错误，只返回完整 JSON。保留人物归属、比喻及不确定程度，不按词句数量改写文风。编号使用原始编号，不得按展示位置重新编号。\n'+encode({'validation_error':reason,'allowed_ids':allowed_ids(request)})
+                correction='\n请按原角色规则修正结构或证据校验错误，只返回完整 JSON。保留同一 Event 的归属、人物、原话的比喻及不确定程度。正文通常控制在 500 字以内，不必写满；复杂经历可适当超出。优先压缩逐轮复述、技术背景、旁支和重复解释，仍须保留关键依据、不同表达、真实转折与实际落点。不要新增事实、改变边界，或按词句数量机械改写文风。重新核对 self_review。编号使用原始编号，不得按展示位置重新编号。\n'+encode({'validation_error':reason,'allowed_ids':allowed_ids(request)})
                 room=policy['max_prompt_chars']-len(request['rules'])-len(request['prompt'])-len(correction)-80
                 if room<0:raise ValueError('提示词上限不足以容纳纠错请求，请减小每批输入。') from error
                 prompt=request['prompt']+correction+'\n上一份不合格输出（仅用于纠错，可能截断）：\n'+raw[:min(room,10000)]

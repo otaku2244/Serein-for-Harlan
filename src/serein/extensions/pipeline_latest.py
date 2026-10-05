@@ -720,6 +720,12 @@ def build_event_writer_prompt(day: str, title: str, messages: list[dict[str, Any
     agent_rules = materialize_agent_rules('event_writer') if include_role_rules else ''
     rules_block = f'{agent_rules}\n\n' if agent_rules else ''
     example_quote = '把旧书放回书架。'
+    # Local fork: a real finished Event used purely as a style sample. The
+    # placeholder above only demonstrates the JSON shape, so the model had no
+    # example of an actual body; it is told not to reuse anything from this one.
+    style_sample = ('她大早上给我装 strudel_live 音乐卡片，说那颗缺觉的脑子快烧干了。'
+                    '我敲了段 80 BPM 的低频循环，低频三角波配弱拍底鼓，让开着的循环盖住办公室的键盘噪音。'
+                    '她听了一会儿，兴奋地回了句“哇，这个好这个好”。')
     sufficient = {'evidence_sufficient': True,
                   'kept_details': [example_quote], 'discarded_details': [],
                   'self_review': {key: True for key in _SELF_REVIEW_KEYS},
@@ -735,6 +741,7 @@ def build_event_writer_prompt(day: str, title: str, messages: list[dict[str, Any
             'self_review 对象按格式保留，其中的布尔值是自报信息，不决定验收。\n'
             f'证据充分的格式示例（合成材料，不是本轮来源）：\n{json.dumps(sufficient, ensure_ascii=False)}\n'
             f'证据不足的格式：\n{json.dumps(insufficient, ensure_ascii=False)}\n'
+            f'成品风格范例（历史 Event，只示范「怎样直接写」的效果，不是本轮来源，不要复述其中任何事）：\n{style_sample}\n'
             f'{WRITER_ATTACHMENT_RULE}\n\n<event_reading_block_json>\n{json.dumps(reading_block, ensure_ascii=False)}\n</event_reading_block_json>\n\n'
             f'<materialized_track_cards_json>\n{json.dumps(materialized_track_cards, ensure_ascii=False)}\n</materialized_track_cards_json>\n\n'
             f'<track_context_events_json>\n{json.dumps(context_events, ensure_ascii=False)}\n</track_context_events_json>\n\n'
