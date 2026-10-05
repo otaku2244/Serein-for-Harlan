@@ -33,7 +33,17 @@ def record_routes(conn, batch_id, assignments):
         raw_id = assignment['source_message_id']
         value = encode(assignment)
         conn.execute('INSERT OR REPLACE INTO pipeline_routes VALUES (?,?)', (raw_id, value))
-        conn.execute('INSERT OR REPLACE INTO pipeline_route_provenance VALUES (?,?,?)',
+        # Provenance answers one question only: which batch actually ran the
+        # Router for this message. The first real producer keeps that
+        # attribution; later batches may refresh the payload but never the
+        # signature. Event batches replay the very same assignments when they
+        # settle, and letting them overwrite this row used to hand the frozen
+        # range proof to a batch whose routing_result snapshot spans more than
+        # the batch reusing it — recovery rejects any frame that carries a
+        # future anchor, so the run failed with
+        # "recorded route history cannot prove the frozen input range".
+        conn.execute('INSERT INTO pipeline_route_provenance(raw_id,batch_id,route_json) VALUES (?,?,?) '
+                     'ON CONFLICT(raw_id) DO UPDATE SET route_json=excluded.route_json',
                      (raw_id, batch_id, value))
 
 
