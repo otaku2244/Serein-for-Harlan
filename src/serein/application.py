@@ -56,14 +56,23 @@ class Services:
         with Search(self._settings.database, self._settings.index) as search:
             return search.search(query, **options)
 
-    def recall(self, query, *, threshold_override=None, **options):
+    def recall(self, query, *, threshold_override=None, manual_fallback=False, **options):
         from .configured_models import effective_settings
         from dataclasses import replace
         settings = effective_settings(self._settings)
+        # Only an explicit automatic-method sentinel opts in; other callers that
+        # omit method retain Recall.run's lexical default. Resolve against the
+        # same effective snapshot used to construct the engine, including UI saves.
+        if "method" in options and options["method"] is None:
+            options["method"] = "semantic" if settings.embedding else "lexical"
         if threshold_override is not None:
             settings = replace(settings, recall={**settings.recall, 'direct_threshold':threshold_override})
         engine = Recall(settings)
-        return {**engine.run(query, **options), 'direct_threshold':engine.policy.direct_threshold}
+        result = engine.run(query, **options)
+        if manual_fallback:
+            from .recall.manual import fallback_lookup
+            result = fallback_lookup(engine, query, result, options)
+        return {**result, 'direct_threshold':engine.policy.direct_threshold}
 
     def find_arc(self, query, limit=5):
         from .configured_models import effective_settings
@@ -215,3 +224,4 @@ class Application:
         self.refresh_optional()
         return {"extensions": self.enabled_extensions,
                 **{key: sorted(getattr(self.contributions, key)) for key in ("tools", "prompt_hooks", "jobs")}}
+

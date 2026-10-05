@@ -1,6 +1,6 @@
 # Serein for Harlan · 自建分支说明
 
-上游：`https://github.com/Yinglianchun/Serein` · 分支基线：`5459ce42f616`
+上游：`https://github.com/Yinglianchun/Serein` · 已跟进到：`68d83e3`（2026-10-05，上游领先 26 个提交全部合入）
 本分支：`https://github.com/otaku2244/Serein-for-Harlan`（公开）
 
 改动的目的只有一个：**让新开一个窗口时不用再手打 `/resume`**，Serein 自己把续接资料带进去。
@@ -39,7 +39,7 @@ cd E:\workbuddy\2026-09-21-20-44-34\Serein-fork
 git push -u origin main
 ```
 
-推送时会要求登录 GitHub。推完网页上应能看到 8 个提交，其中**只有两个是真正的代码改动**（`feat(gateway): auto-load continuation material on a new window`、`fix(gateway): replay automatic resume snapshots without the /resume command`），其余都是 `fork/` 下的工具、文档和测试。
+推送时会要求登录 GitHub。能看到自建的代码提交即可：开窗自动续接两个（`feat(gateway): auto-load continuation material on a new window`、`fix(gateway): replay automatic resume snapshots without the /resume command`）、图片转录绑定一个（`fix(fork): bind curator transcriptions to the pretranscribed receipts`），其余都是 `fork/` 下的工具、文档和测试。
 
 > 这台电脑上没有任何 GitHub 凭据（无 `~/.git-credentials`、凭据管理器里也没有条目），所以推送必须由你本人完成。
 
@@ -135,7 +135,7 @@ git fetch upstream
 git merge upstream/main
 ```
 
-本分支只在 7 个文件上有差异，其中 6 个是上游文件（冲突只会出在这几行的附近）：
+本分支只在 9 个文件上有差异，其中 6 个是上游文件（冲突只会出在这几行的附近）：
 
 | 文件 | 我改了什么 |
 |---|---|
@@ -144,14 +144,18 @@ git merge upstream/main
 | `src/serein/deployment.py` | `DEFAULT_FEATURES` 加一个键 `auto_resume: False` |
 | `web/src/components/FeatureSettings.jsx` | 加一行开关说明 |
 | `web/src/recallObservationOutcome.js` | 加一行状态文案 |
+| `src/serein/extensions/pipeline.py` | 12 行：给 `bind_transcriptions` 多传一个 `reference` |
+| `src/serein/extensions/pipeline_images.py` | 53 行：`bind_transcriptions` 接受 `reference`，按 `sha256` 对号绑定转录 |
 | `scripts/upstream_update.py` | 只改 `REPOSITORY` 常量一行 |
 | `release-files.json` | 加一个文件名 |
+
+后两组是两件独立的事：`chat_resume_auto` 那组是开窗自动续接；`pipeline*.py` 那组修的是「`pretranscribed` 路径下，curator 拿到的图片转录可能和原图对不上号」——上游 `68d83e3` 时仍未修，所以补丁继续保留。
 
 合并时唯一要小心的：`release-files.json`。它是一份纯文件名清单，**上游新增的文件名和我加的那个都要留着**，别合丢。
 
 合完先跑一次 `python3 fork/test_chat_resume_auto.py`。它会当场告出上游是否动了补丁依赖的接口（比如 `inject_retained`、快照字典的键、`_prepend_dynamic_context_to_user_message`）。全绿再推。
 
-> `fork/` 目录（这一个测试、切换脚本、本文档）**不在** `release-files.json` 里，所以它只是跟着 git 走，更新器不会把它当成部署源码、也不会往 VPS 上写。部署源码始终是 529 个文件。
+> `fork/` 目录（这一个测试、切换脚本、本文档）**不在** `release-files.json` 里，所以它只是跟着 git 走，更新器不会把它当成部署源码、也不会往 VPS 上写。部署源码跟随上游，当前是 551 个文件。
 
 合完推上去，然后上 VPS 跑 `se → 1`，它会从你的 fork 拉全部源码并重建。之后 `se → 1` 永久自洽：
 
@@ -222,16 +226,19 @@ ls -lt /root/Serein/deploy/backups/source-*.zip | head -3
 
 ---
 
-## 六、两个代码提交
+## 六、三个代码提交
 
 ```
 91f7f30  fix(gateway): replay automatic resume snapshots without the /resume command
 723d835  feat(gateway): auto-load continuation material on a new window
+0d208bd  fix(fork): bind curator transcriptions to the pretranscribed receipts
 ```
 
-（另外两个提交只动 `fork/` 里的脚本、说明和测试，不改部署源码。）
+（其余提交只动 `fork/` 里的脚本、说明和测试，不改部署源码。）
 
-第二个提交修的是第一个提交埋下的真问题，值得单独说明，因为它是**实测发现的、上游函数本身的限制**：
+前两个解决的是同一个问题，见下。第三个修的是另一件事：`pretranscribed` 路径下，host 已经按原图字节校验并落库了转录，但归线阶段仍然按「第几张图」的位置去配对，一旦这一批里混进别的图，curator 手上的转录就和原图错位。修法是让 `bind_transcriptions` 收一份 `reference`（`source_message_id` + `position` + `sha256`），按摘要对号入座；没给 `reference` 时行为完全不变。
+
+第一个提交修的是第二个提交埋下的真问题，值得单独说明，因为它是**实测发现的、上游函数本身的限制**：
 
 `chat_resume.inject_retained()` 的第一件事是从锚点消息里删掉 `/resume` 命令。自动续接的快照锚在一条**普通的**首条消息上，根本没有命令可删 —— 于是第二轮的 `remove_command()` 抛 `ValueError`，一次正常对话会变成 500。
 

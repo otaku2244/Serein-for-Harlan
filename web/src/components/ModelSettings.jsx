@@ -5,6 +5,7 @@ import {upstreamModels,taskModelOptions} from "../modelOptions.js";
 import {AgentGuide} from './AgentGuide.jsx';
 import {RecallThresholdSettings} from './RecallThresholdSettings.jsx';
 import {upstreamsForSave} from '../upstreamSecrets.js';
+import {memoryAvailabilitySummary,prepareMemoryIndex} from '../memoryPreparation.js';
 
 const tasks = {writer:"Narrative Writer",embedding:"Embedding",reranker:"Reranker",
   relations:"Scene 关系",dreams:"梦境",narrative_scout:"叙事卷找材料",persona:"心绪/防撤退",
@@ -83,13 +84,14 @@ export function ModelSettings({page,summaryRequest=0,onOpenPipeline,onOpenCatalo
     finally{setBusy(false);}
   }
   async function prepare() {
+    if(busy)return;
     setBusy(true);setStatus("正在准备路由和记忆向量，这会调用你选择的 embedding 模型…");
+    setConfig(current=>({...current,memory_ready:false}));
     try {
-      const response=await fetch("/__serein/settings/prepare-memory",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
-      if(!response.ok)throw new Error("准备失败，请核对 embedding 模型、接口和密钥后重试。");
-      const result=await response.json();setConfig(await instanceSettings());setStatus(`记忆检索已准备好，向量维度 ${result.dimension}。`);
-    } catch(error){setStatus(error.message);}
-    finally{setBusy(false);}
+      const result=await prepareMemoryIndex({loadSettings:instanceSettings});
+      if(result.config)setConfig(result.config);
+      setStatus(result.message);
+    } finally{setBusy(false);}
   }
   return <>
     <div role="tabpanel" id="settings-content-models" aria-labelledby="settings-tab-models" aria-hidden={page!=="models"} inert={page!=="models"}>
@@ -129,7 +131,7 @@ export function ModelSettings({page,summaryRequest=0,onOpenPipeline,onOpenCatalo
         <small>作为梦境模型的背景设定，保存后下一次做梦生效。梦境写作规则会一同发送。</small></label></>}
           <button type="button" className="settings-link" onClick={onOpenCatalog}>管理上游与模型</button>
       <label className="settings-toggle"><span><strong>启用 API Writer</strong><small>{config.features.narrative_tools?'已由主模型通过工具读写叙事卷，自动 Writer 已关闭。':'生成预览，确认保存后才写入叙事卷。使用自己的 Agent，可打开“配置”页的接入说明。'}</small></span><input type="checkbox" role="switch" disabled={config.features.narrative_tools} checked={config.upstream.writer_enabled} onChange={event=>option("writer_enabled",event.target.checked)} /></label>
-      <label className="settings-toggle"><span><strong>聊天时自动带入记忆</strong><small>{config.memory_ready?"检索已就绪。":"选择并保存 embedding 和 reranker 后，点击下方建立 / 补齐检索索引。"}</small></span>
+      <label className="settings-toggle"><span><strong>聊天时自动带入记忆</strong><small>{memoryAvailabilitySummary(config)}</small></span>
         <input type="checkbox" role="switch" disabled={!config.memory_ready} checked={config.upstream.memory_enabled} onChange={event=>option("memory_enabled",event.target.checked)} /></label>
       <div className="settings-group__heading"><h3>长文分段</h3></div>
       <label className="settings-toggle"><span><strong>长文分段检索（Passage）</strong>
@@ -162,6 +164,12 @@ export function ModelSettings({page,summaryRequest=0,onOpenPipeline,onOpenCatalo
       <small>“完整提示词字符上限”是最终模型调用保护，可按所用模型上下文提高到 4000000；修改后下一次继续当前批次即可生效。</small>
       <small>只并发 Curator 已冻结计划后的第一轮 Event Writer；Router、Curator、补读与最终结算保持串行。Agent 模式仍一次领取一个 Writer 任务。默认 1。</small>
       <small>默认回看 3 天（72 小时）：归线读取这段时间内实际归入过原话的 Track，不依赖聊天窗口。旧 Event 不按时间过期；同一 Track 超过 8 条 active leaves 时只 defer 该 Track，避免截断候选后误写。天数修改对新批次生效，已冻结任务保持原材料。</small>
+      <label className="settings-toggle"><span><strong>检索归线候选（实验）</strong><small>默认关闭，完整带入回看范围内的旧卡。开启后，近线完整带入，较早的卡由程序检索补充；可能漏接或改变分线。</small></span><input type="checkbox" role="switch" checked={config.pipeline.track_candidates_enabled ?? false} onChange={event=>setConfig(current=>({...current,pipeline:{...current.pipeline,track_candidates_enabled:event.target.checked}}))}/></label>
+      {config.pipeline.track_candidates_enabled && <>
+        <label className="settings-field"><span>直接带入最近活动的 Track</span><select value={config.pipeline.track_direct_hours ?? 12} onChange={event=>setConfig(current=>({...current,pipeline:{...current.pipeline,track_direct_hours:Number(event.target.value)}}))}>{[12,24,48,72].map(hours=><option key={hours} value={hours}>最近 {hours} 小时</option>)}</select></label>
+        <label className="settings-field"><span>额外检索候选上限（默认 8 张）</span><input type="number" min="1" max="50" value={config.pipeline.track_candidate_limit ?? 8} onChange={event=>setConfig(current=>({...current,pipeline:{...current.pipeline,track_candidate_limit:Number(event.target.value)}}))}/></label>
+        <small>使用整批新原文和附近前文，搜索旧卡的标题、续接线索及近期原文；程序排除已直接带入的卡并去重。只筛选本次输入，卡片和原文仍完整保存。对新批次生效，已冻结任务保留原输入。</small>
+      </>}
       <button type="button" className="settings-link" onClick={onOpenPipeline}>查看整理进度与导入原话</button>
     </details>
           <AgentGuide label="配置 Agent 整理 Event" />
@@ -181,3 +189,4 @@ export function ModelSettings({page,summaryRequest=0,onOpenPipeline,onOpenCatalo
     </div>
   </>;
 }
+
