@@ -3494,6 +3494,28 @@ label:has(input:focus-visible) {
   margin: 6px 0 0;
   padding-left: 18px;
 }
+.narrative-editor__unverified {
+  display: grid;
+  gap: 4px;
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(180, 83, 9, 0.28);
+  border-left: 3px solid #b45309;
+  border-radius: 3px;
+  background: rgba(180, 83, 9, 0.06);
+  color: #78350f;
+  font-family: var(--font-editorial-cjk);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.narrative-editor__unverified strong {
+  font-weight: 600;
+}
+.narrative-editor__unverified em {
+  color: #92400e;
+  font-style: normal;
+  opacity: 0.85;
+}
 .narrative-editor__saved {
   margin: 12px 0 0;
   color: #64746e;

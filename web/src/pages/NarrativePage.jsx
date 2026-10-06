@@ -42,6 +42,7 @@ export function NarrativePage() {
   const [previewMode, setPreviewMode] = useState("");
   const [previewError, setPreviewError] = useState("");
   const [previewWarnings, setPreviewWarnings] = useState([]);
+  const [unreviewedKeys, setUnreviewedKeys] = useState([]);
   const [previewing, setPreviewing] = useState(false);
   const [writingNew, setWritingNew] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -100,6 +101,7 @@ export function NarrativePage() {
     setPreviewMode("");
     setPreviewError("");
     setPreviewWarnings([]);
+    setUnreviewedKeys([]);
     setSaveMessage("");
     setMaterialIds(null);
     setPreviewSeal(null);
@@ -114,6 +116,7 @@ export function NarrativePage() {
     setPreviewMode("");
     setPreviewError("");
     setPreviewWarnings([]);
+    setUnreviewedKeys([]);
     setSaveMessage("");
     setMaterialIds(selectedRoll?.materialIds || null);
     setPreviewSeal(null);
@@ -127,6 +130,7 @@ export function NarrativePage() {
     setPreviewMode("");
     setPreviewError("");
     setPreviewWarnings([]);
+    setUnreviewedKeys([]);
     setSaveMessage("");
     setMaterialIds(null);
     setPreviewSeal(null);
@@ -143,6 +147,7 @@ export function NarrativePage() {
     setPreviewing(true);
     setPreviewError("");
     setPreviewWarnings([]);
+    setUnreviewedKeys([]);
     setSaveMessage("");
     setPreviewSeal(null);
     try {
@@ -158,6 +163,7 @@ export function NarrativePage() {
       setPreviewDiff(result.diff || "");
       setPreviewMode(mode);
       setPreviewWarnings(result.review_warnings || []);
+      setUnreviewedKeys(result.unreviewed_keys || []);
       setMaterialIds(result.proposed_material_ids);
       setPreviewSeal(result);
       return result;
@@ -542,6 +548,13 @@ export function NarrativePage() {
                       spellCheck="false"
                     />
                     {previewError ? <p className="narrative-editor__error" role="alert">{previewError}</p> : null}
+                    {unreviewedKeys.length ? (
+                      <div className="narrative-editor__unverified" role="alert">
+                        <strong>本次正文有 {unreviewedKeys.length} 项未经模型自检，请人工核对后再保存。</strong>
+                        <span>未核对项：{unreviewedKeys.join("、")}</span>
+                        <em>模型可能压根没输出这些自检字段（常见于中转商未透传格式约束），正文本身仍可编辑。</em>
+                      </div>
+                    ) : null}
                     {previewWarnings.length ? (
                       <details className="narrative-editor__warnings">
                         <summary>Writer 自检提示 {previewWarnings.length} 条（不影响保存，可自行核对）</summary>

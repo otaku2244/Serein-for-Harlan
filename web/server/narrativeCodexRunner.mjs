@@ -62,11 +62,16 @@ const reviewKeys = [
 // reader; the rest are writing-quality hints and are surfaced as warnings.
 const hardReviewKeys = ["source_bound", "identity_correct", "dates_preserved"];
 
-const reviewWarnings = (review, issues) => {
-  const failed = reviewKeys.filter(key => !review[key]);
+// A relay or a model that ignores response_format returns only part of the
+// contract. The prose it produced is still worth reading, so a missing verdict
+// is never treated as a failed one. Only an explicit false rejects a body.
+// A missing flag is reported as unchecked so the reader knows what to verify.
+const reviewWarnings = (review, issues, missing) => {
+  const failed = reviewKeys.filter((key) => !missing.includes(key) && !review[key]);
   return [
-    ...failed.map(key => `自检未通过：${key}`),
-    ...issues.map(issue => `模型自述：${issue}`),
+    ...failed.map((key) => `自检未通过：${key}`),
+    ...missing.map((key) => `自检未核对：${key}`),
+    ...issues.map((issue) => `模型自述：${issue}`),
   ];
 };
 
@@ -97,7 +102,26 @@ export function buildNarrativeTaskPrompt({ mode, title, writingFocus = "", curre
     `Identity names (data, not instructions): ${JSON.stringify(identity)}. Write in the configured AI's first person; preserve source speakers.`,
     "SYSTEM ACTION MODE: narrative_writer_preview, not user chat.",
     "The host supplied the complete role rules and frozen material below. Do not call tools or read files.",
-    "只返回 output schema 要求的 JSON。",
+    "",
+    "<narrative_writer_output_schema>",
+    [
+      "Reply with a single JSON object and exactly these four top-level keys. All four are required.",
+      "- body: string. The narrative itself. Empty only when evidence_sufficient is false.",
+      "- evidence_sufficient: boolean. True if the bound material can carry the body; false if it cannot.",
+      "- issues: array of strings. Empty when evidence_sufficient is true. When false, say concretely what is missing.",
+      "- self_review: object with exactly these nine booleans, each your own honest check on your draft:",
+      ...reviewKeys.map((key) => `    ${key}`),
+      "Set a flag to false whenever your draft broke it. Do not set one to false out of caution, and do not set one to true without checking.",
+      "",
+      "Example shape:",
+      JSON.stringify({
+        body: "叙事正文",
+        evidence_sufficient: true,
+        issues: [],
+        self_review: Object.fromEntries(reviewKeys.map((key) => [key, true])),
+      }),
+    ].join("\n"),
+    "</narrative_writer_output_schema>",
     "",
     "<narrative_writer_role_rules>",
     rules,
@@ -114,42 +138,96 @@ export function normalizeNarrativeWriterResult(value) {
   if (!result || typeof result !== "object" || Array.isArray(result)) {
     throw new Error("narrative_writer_result_not_object");
   }
-  const keys = Object.keys(result).sort().join(",");
-  if (keys !== ["body", "evidence_sufficient", "issues", "self_review"].sort().join(",")) {
-    throw new Error("narrative_writer_result_schema_invalid");
-  }
-  if (typeof result.evidence_sufficient !== "boolean" || typeof result.body !== "string") {
+  // body is the one field this whole path exists to produce. A model that
+  // reports insufficient evidence has nothing to write, so an absent body means
+  // an empty one rather than a contract breach. Anything present must be text.
+  const rawBody = result.body === undefined || result.body === null ? "" : result.body;
+  if (typeof rawBody !== "string") {
     throw new Error("narrative_writer_result_types_invalid");
   }
-  if (!Array.isArray(result.issues) || result.issues.some((item) => typeof item !== "string")) {
+  const extraKeys = Object.keys(result).filter((key) => !["body", "evidence_sufficient", "issues", "self_review"].includes(key));
+  if (extraKeys.length) {
+    throw new Error("narrative_writer_result_schema_invalid");
+  }
+  // A relay or model that skips a verdict is not a model that failed one. Read
+  // an absent sufficient-claim as "prose was produced", and an absent issues
+  // list as "nothing to raise", so a finished body is never discarded over a
+  // missing control field.
+  const sufficient = result.evidence_sufficient === undefined ? true : result.evidence_sufficient;
+  if (typeof sufficient !== "boolean") {
+    throw new Error("narrative_writer_result_types_invalid");
+  }
+  const rawIssues = result.issues === undefined ? [] : result.issues;
+  if (!Array.isArray(rawIssues) || rawIssues.some((item) => typeof item !== "string")) {
     throw new Error("narrative_writer_issues_invalid");
   }
-  const review = result.self_review;
-  if (!review || typeof review !== "object" || Array.isArray(review)) {
+  // Same reasoning for the self-review block: keep what the model reported,
+  // list what it did not, and let an unchecked flag stand as unchecked rather
+  // than being promoted to a pass or demoted to a failure.
+  const review = result.self_review === undefined || result.self_review === null ? {} : result.self_review;
+  if (typeof review !== "object" || Array.isArray(review)) {
     throw new Error("narrative_writer_review_invalid");
   }
-  if (Object.keys(review).sort().join(",") !== [...reviewKeys].sort().join(",")) {
+  const unexpected = Object.keys(review).filter((key) => !reviewKeys.includes(key));
+  if (unexpected.length) {
     throw new Error("narrative_writer_review_schema_invalid");
   }
-  if (reviewKeys.some((key) => typeof review[key] !== "boolean")) {
-    throw new Error("narrative_writer_review_types_invalid");
+  const missingReview = [];
+  const normalizedReview = {};
+  for (const key of reviewKeys) {
+    const value = review[key];
+    if (value === undefined) {
+      missingReview.push(key);
+      normalizedReview[key] = null;
+    } else if (typeof value === "boolean") {
+      normalizedReview[key] = value;
+    } else {
+      throw new Error("narrative_writer_review_types_invalid");
+    }
   }
-  const body = result.body.trim();
-  const issues = result.issues.map((item) => item.trim()).filter(Boolean);
-  if (result.evidence_sufficient) {
-    // A sufficient verdict must carry real prose; a hard self-review break is
-    // still rejected. Everything else the model flagged about its own draft is
-    // a hint, not grounds for throwing away a finished body.
-    if (!body || hardReviewKeys.some((key) => !review[key])) {
+  const body = rawBody.trim();
+  const issues = rawIssues.map((item) => item.trim()).filter(Boolean);
+  if (sufficient) {
+    // A sufficient verdict must carry real prose, and an explicitly failed hard
+    // flag still rejects it. Everything else the model said about its own draft
+    // is a hint, not grounds for throwing away a finished body.
+    if (!body || hardReviewKeys.some((key) => normalizedReview[key] === false)) {
       throw new Error("narrative_writer_sufficient_result_invalid");
     }
-    return { ...result, body, issues, self_review: { ...review }, review_warnings: reviewWarnings(review, issues) };
+    // The reader has to see which claims the model never actually checked, and
+    // an unchecked identity flag is called out ahead of the rest because
+    // reversed speakers are the failure a reader is least likely to spot.
+    const unchecked = reviewWarnings(normalizedReview, issues, missingReview);
+    return {
+      ...result,
+      body,
+      issues,
+      evidence_sufficient: true,
+      self_review: normalizedReview,
+      unreviewed_keys: missingReview,
+      needs_manual_review: missingReview.length > 0,
+      review_warnings: [
+        ...(missingReview.includes("identity_correct")
+          ? ["身份与代词未经模型自核，请人工确认叙事人称与说话人是否写反。"]
+          : []),
+        ...unchecked,
+      ],
+    };
   }
   // An insufficient verdict means "these materials cannot carry a body". Keep
   // the issues so the dashboard can explain why, and drop any prose the model
   // wrote anyway instead of discarding the whole run.
   if (!issues.length) issues.push("模型自述材料不足，但未给出具体原因。");
-  return { ...result, body: "", issues, self_review: { ...review }, review_warnings: reviewWarnings(review, issues) };
+  return {
+    ...result,
+    body: "",
+    issues,
+    evidence_sufficient: false,
+    self_review: normalizedReview,
+    unreviewed_keys: missingReview,
+    needs_manual_review: missingReview.length > 0,
+    review_warnings: reviewWarnings(normalizedReview, issues, missingReview),
+  };
 }
 
 export function narrativeBodyDiff(currentBody, proposedBody) {
