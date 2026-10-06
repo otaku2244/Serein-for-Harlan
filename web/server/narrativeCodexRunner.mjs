@@ -1,8 +1,48 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync, readdirSync, unlinkSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { callSereinBackend } from "./sereinBackend.mjs";
+
+// A preview that fails validation is thrown away on purpose, which leaves no
+// way to see what the model actually wrote. Record the rejected output next to
+// the instance database instead. Only the model's own output is stored; the
+// prompt carries the bound source materials and is never written.
+const WRITER_DEBUG_MAX_CHARS = 200_000;
+const WRITER_DEBUG_MAX_FILES = 20;
+
+const stamp = () => {
+  const now = new Date();
+  const pad = (value, size = 2) => String(value).padStart(size, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+};
+
+export function recordWriterDebug(target, { layer, error, model = "", content = null, finish_reason = "" }) {
+  try {
+    mkdirSync(target, { recursive: true });
+    const text = typeof content === "string" ? content : content === null ? "" : JSON.stringify(content);
+    const stored = text.length > WRITER_DEBUG_MAX_CHARS
+      ? `${text.slice(0, WRITER_DEBUG_MAX_CHARS)}\n...[truncated, ${text.length} chars total]`
+      : text;
+    const file = join(target, `${stamp()}-${String(Date.now() % 1_000_000).padStart(6, "0")}-${layer}.json`);
+    writeFileSync(file, `${JSON.stringify({
+      recorded_at: new Date().toISOString(),
+      layer,
+      error: String(error).slice(0, 500),
+      model: String(model).slice(0, 200),
+      finish_reason: String(finish_reason).slice(0, 80),
+      content: stored,
+    }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    const existing = readdirSync(target).filter((name) => name.endsWith(".json")).map((name) => join(target, name));
+    if (existing.length > WRITER_DEBUG_MAX_FILES) {
+      existing.sort((a, b) => statSync(a).mtimeMs - statSync(b).mtimeMs)
+        .slice(0, existing.length - WRITER_DEBUG_MAX_FILES)
+        .forEach((name) => { try { unlinkSync(name); } catch { } });
+    }
+  } catch {
+    // A debug trail must never turn a preview failure into a different failure.
+  }
+}
 
 const reviewKeys = [
   "source_bound",
@@ -170,7 +210,20 @@ export async function runNarrativeCodexTask({mode,title,writingFocus = "",curren
     child.stdin.on("error",()=>{});
     child.stdin.end(JSON.stringify(task));
   });
-  const normalized=normalizeNarrativeWriterResult(raw);
+  let normalized;
+  try {
+    normalized = normalizeNarrativeWriterResult(raw);
+  } catch (error) {
+    // Validation rejected a draft the model did produce. Keep it before the
+    // error code travels up and the body is lost.
+    recordWriterDebug(process.env.SEREIN_WRITER_DEBUG_DIR || "/writer-debug", {
+      layer: "node",
+      error: error?.message || String(error),
+      model: selection.model,
+      content: typeof raw === "string" ? raw : JSON.stringify(raw),
+    });
+    throw error;
+  }
   return {status:normalized.evidence_sufficient?"ok":"insufficient",...normalized,mode,
     provider:selection.model,diff:narrativeBodyDiff(currentBody,normalized.body),
     publication_status:"not_published",writes_performed:[],execution_mode:"preview",

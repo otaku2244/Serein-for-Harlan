@@ -18,6 +18,7 @@ from .. import chat_resume
 from .. import chat_resume_auto
 from ..chat_observation import ChatObservation, recall_summary
 from ..chat_archive import prepare_turn, archive_turn, archive_user_turn
+from ..writer_debug import record as record_writer_debug
 
 
 async def transcribe_image_turn(settings, turn):
@@ -407,12 +408,18 @@ def routes(settings, services, auth):
             raise HTTPException(400,'Writer requires prompt and output_schema')
         if body.get('image_inputs'):
             raise HTTPException(400,'Narrative Writer accepts text materials only')
+        raw_content=None;finish_reason=None
         try:
             result=await asyncio.wait_for(complete({**model,'request_timeout_seconds':300},{'messages':[{'role':'user','content':body['prompt']}],
                 'response_format':{'type':'json_schema','json_schema':{'name':'narrative_preview','strict':True,'schema':body['output_schema']}}}),timeout=300)
-            return {'result':json.loads(result['choices'][0]['message']['content'])}
+            raw_content=result['choices'][0]['message'].get('content')
+            finish_reason=result['choices'][0].get('finish_reason')
+            return {'result':json.loads(raw_content)}
         except (httpx.TimeoutException,TimeoutError):
             raise HTTPException(504,'Narrative Writer exceeded 5 minutes') from None
-        except (httpx.HTTPError,ValueError,KeyError,IndexError,TypeError):
+        except (httpx.HTTPError,ValueError,KeyError,IndexError,TypeError) as exc:
+            # The draft is discarded here, so record it before the 502 hides it.
+            record_writer_debug(settings.database.parent,layer='python',error=f'{type(exc).__name__}: {exc}',
+                model=model.get('model') or model.get('id'),content=raw_content,finish_reason=finish_reason)
             raise HTTPException(502,'Writer returned an invalid result') from None
     return router
