@@ -85,8 +85,14 @@ EXTERNAL_CONTEXT_BLOCK_TITLES = {
 # _strip_external_context_blocks 当成“非名单标题行”原样留下；必须单独识别并丢弃，
 # 否则这一行会漏进归档和检索 query。块尾标记本身不是块标题，不能加进上面那个集合——
 # 那会让 skipping 一直为真，把紧随其后的用户原话整段吞掉（本函数不把空行当出块信号）。
+#
+# ⚠️ 这里可以有**多条**，它们是"每种块的各自收尾行"，不是二选一：
+#   · 无产物（此刻 / 找她 / 独处）：第一条
+#   · 独处 + 冲浪产物：第二条（出口指引，见 jiwen-bridge/lib/inject-text.js 的 SURF_TAIL_LINE）
+#   两种块各用各的，互不影响。新增任何一条都必须与桥侧单一来源常量逐字一致。
 EXTERNAL_CONTEXT_BLOCK_END_MARKERS = {
     "此状态为潜意识的底色沉淀，自然浸润在回应里，不作任何元说明或刻意提及。",
+    "以上为你独处时的真实切片，你可以留下你的独自思考、也可以把内容直接呈现给她，如何行动由你决定。",
 }
 
 OPERIT_STABLE_CONTEXT_TITLES = {
