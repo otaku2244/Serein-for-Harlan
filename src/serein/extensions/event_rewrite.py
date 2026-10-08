@@ -28,6 +28,34 @@ _CONTEXT_CHARS = 6000
 _CONTEXT_WINDOW = 12
 
 
+_LENGTH_VIOLATION_MARKERS = ('净字数', '不得长于', '长于 owned 原文', '超过 1000 字')
+
+
+def _length_only(violations: list[str]) -> bool:
+    """违规是否全部属于篇幅类。"""
+    return bool(violations) and all(
+        any(marker in item for marker in _LENGTH_VIOLATION_MARKERS) for item in violations)
+
+
+def _length_budget_prompt(prompt: str, result: dict[str, Any],
+                          owned_payload: list[dict[str, Any]]) -> str | None:
+    """把「超过比例上限」翻译成一个具体字数，直接压给模型。
+
+    比例类违规只说「超过 50%」，模型算不出该写多少字，实测连试 3 次仍会停在
+    60%~90%。这里按 owned 原文净字数直接算出上限。原文太短算不出有意义预算时不接手。
+    """
+    source_chars = L._compact_len(L._writer_owned_text(owned_payload))
+    if source_chars < L.EVENT_BODY_OVERLAP_MIN_SOURCE_CHARS:
+        return None
+    budget = min(L.EVENT_BODY_ACCEPT_MAX_CHARS,
+                 max(60, int(source_chars * L.EVENT_BODY_SOURCE_RATIO_MAX)))
+    current = L._compact_len(str(result.get('event_draft') or ''))
+    return prompt + (
+        '\n篇幅硬预算：正文净字数硬性压到 %d 字以内（上一版 %d 字，owned 原文净字数 %d 字）。'
+        '只留信息点本身，删掉全部解释、铺垫、复述、推导与评价；不得新增原文没有的内容；'
+        '保留第一人称主体（“我”）；返回完整 JSON。' % (budget, current, source_chars))
+
+
 def _rows_to_dicts(rows) -> list[dict[str, Any]]:
     return [{key: row[key] for key in row.keys()} for row in rows]
 
@@ -152,6 +180,10 @@ async def rewrite_event_draft(
     for attempt in range(1, attempts + 1):
         if attempt > 1 and result is not None:
             used_prompt = L.build_event_writer_repair_prompt(prompt, result, violations)
+            if _length_only(violations):
+                budgeted = _length_budget_prompt(prompt, result, owned_payload)
+                if budgeted:
+                    used_prompt = budgeted
         response = await complete(call_model, {
             'messages': [{'role': 'system', 'content': rules},
                          {'role': 'user', 'content': used_prompt}],
