@@ -30,14 +30,16 @@ def materialize_agent_rules(role):
     return _identity_text((Path(__file__).parents[1]/'resources'/'agents'/role/'AGENTS.md').read_text('utf-8'))
 
 EVENT_WRITER_GUIDE_MAX_CHARS = 500
-EVENT_BODY_ACCEPT_MAX_CHARS = 1500
+EVENT_BODY_ACCEPT_MAX_CHARS = 1000     # 单篇正文硬上限（extend 时指本次新增段落）
+EVENT_BODY_TOTAL_MAX_CHARS = 1500      # extend 时「旧正文＋新增段落」总量上限
 
 # Local fork: 质量硬校验阈值。依据 scripts/overlap_probe.py 的实测——
 # 合规改写 6-gram 重合约 12%~29%，换人称的搬运稿约 59.7%，中间有 30 点以上空档。
 EVENT_BODY_SOURCE_OVERLAP_MAX = 0.40       # 正文与 owned 原文的逐字重合上限
 EVENT_DISCARDED_OVERLAP_MAX = 0.50         # discarded_details 与正文的重合上限
-EVENT_BODY_OVERLAP_MIN_SOURCE_CHARS = 100  # 原文太短时不做重合检测（样本不足）
+EVENT_BODY_OVERLAP_MIN_SOURCE_CHARS = 100  # 原文太短时不启用重合与篇幅比例检测（样本不足）
 EVENT_BODY_OVERLAP_NGRAM = 6
+EVENT_BODY_SOURCE_RATIO_MAX = 0.50         # 正文净字数占 owned 原文净字数的上限
 
 TRACK_EVENT_POLICIES = {'default', 'rolling_engineering'}
 EVENT_CURATOR_ACTIONS = {'create', 'extend', 'rewrite', 'merge'}
@@ -759,6 +761,11 @@ def build_event_writer_repair_prompt(original_prompt, failed_result, violations)
     return original_prompt+f'\n请按原角色规则修正结构或证据校验错误，保留同一 Event 的归属、人物、原话的比喻及不确定程度。正文通常控制在 500 字以内，不必写满；复杂经历可适当超出。优先压缩逐轮复述、技术背景、旁支和重复解释，仍须保留关键依据、不同表达、真实转折与实际落点。不要新增事实、改变边界，或按词句数量机械改写文风。重新核对 self_review。\n'+json.dumps({'violations':violations,'failed_result':failed_result},ensure_ascii=False)
 
 
+def _compact_len(text: str) -> int:
+    """净字数（只计字母数字与汉字），供篇幅比例校验与重合检测用同一口径。"""
+    return sum(1 for ch in str(text or '') if ch.isalnum() or '\u4e00' <= ch <= '\u9fff')
+
+
 def _overlap_ngrams(text: str, size: int) -> set[str]:
     compact = ''.join(ch for ch in str(text or '') if ch.isalnum() or '\u4e00' <= ch <= '\u9fff')
     if len(compact) < size:
@@ -825,7 +832,7 @@ def validate_event_writer_result(result: dict[str, Any], owned_sources: list[dic
     # —— 质量硬校验（Local fork 追加）——
     if body:
         source_text = _writer_owned_text(owned_sources)
-        source_chars = len(''.join(ch for ch in source_text if ch.isalnum() or '\u4e00' <= ch <= '\u9fff'))
+        source_chars = _compact_len(source_text)
         if source_chars >= EVENT_BODY_OVERLAP_MIN_SOURCE_CHARS:
             overlap = _overlap_ratio(body, source_text, EVENT_BODY_OVERLAP_NGRAM)
             if overlap is not None and overlap > EVENT_BODY_SOURCE_OVERLAP_MAX:
@@ -833,6 +840,15 @@ def validate_event_writer_result(result: dict[str, Any], owned_sources: list[dic
                     f'正文与 owned 原文逐字重合 {overlap:.0%}，超过 {EVENT_BODY_SOURCE_OVERLAP_MAX:.0%} 上限；'
                     '这是把原文换了一遍人称的搬运稿，不是改写。请重组句式与语序，'
                     '把叮嘱／判断放回它发生的场景，并保住第一人称主体。')
+            body_chars = _compact_len(body)
+            if body_chars > source_chars:
+                violations.append(
+                    f'正文净字数 {body_chars} 字，超过 owned 原文净字数 {source_chars} 字；'
+                    '原文只有几条时不能靠注水扩写凑成相当篇幅，请只保留原文真实承载的内容。')
+            elif body_chars > source_chars * EVENT_BODY_SOURCE_RATIO_MAX:
+                violations.append(
+                    f'正文净字数 {body_chars} 字，是 owned 原文 {source_chars} 字的 {body_chars / source_chars:.0%}，'
+                    f'超过 {EVENT_BODY_SOURCE_RATIO_MAX:.0%} 上限；只有几条原文时更不能逐条展开，请按真实信息量取舍。')
         if '我' not in body:
             violations.append(
                 '正文通篇没有第一人称主体（未出现“我”）；'
