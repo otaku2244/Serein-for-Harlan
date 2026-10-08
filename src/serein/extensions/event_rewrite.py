@@ -42,13 +42,17 @@ def _length_budget_prompt(prompt: str, result: dict[str, Any],
     """把「超过比例上限」翻译成一个具体字数，直接压给模型。
 
     比例类违规只说「超过 50%」，模型算不出该写多少字，实测连试 3 次仍会停在
-    60%~90%。这里按 owned 原文净字数直接算出上限。原文太短算不出有意义预算时不接手。
+    60%~90%。这里按 owned 原文净字数直接算出上限：原文达 RATIO_MIN（300 字）
+    时取一半，不足时只要求不长于原文（与生产校验口径一致）。
     """
     source_chars = L._compact_len(L._writer_owned_text(owned_payload))
-    if source_chars < L.EVENT_BODY_OVERLAP_MIN_SOURCE_CHARS:
+    if not source_chars:
         return None
-    budget = min(L.EVENT_BODY_ACCEPT_MAX_CHARS,
-                 max(60, int(source_chars * L.EVENT_BODY_SOURCE_RATIO_MAX)))
+    if source_chars >= L.EVENT_BODY_RATIO_MIN_SOURCE_CHARS:
+        budget = int(source_chars * L.EVENT_BODY_SOURCE_RATIO_MAX)
+    else:
+        budget = source_chars
+    budget = min(L.EVENT_BODY_ACCEPT_MAX_CHARS, max(60, budget))
     current = L._compact_len(str(result.get('event_draft') or ''))
     return prompt + (
         '\n篇幅硬预算：正文净字数硬性压到 %d 字以内（上一版 %d 字，owned 原文净字数 %d 字）。'

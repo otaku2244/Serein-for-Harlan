@@ -37,9 +37,10 @@ EVENT_BODY_TOTAL_MAX_CHARS = 1500      # extend 时「旧正文＋新增段落�
 # 合规改写 6-gram 重合约 12%~29%，换人称的搬运稿约 59.7%，中间有 30 点以上空档。
 EVENT_BODY_SOURCE_OVERLAP_MAX = 0.40       # 正文与 owned 原文的逐字重合上限
 EVENT_DISCARDED_OVERLAP_MAX = 0.50         # discarded_details 与正文的重合上限
-EVENT_BODY_OVERLAP_MIN_SOURCE_CHARS = 100  # 原文太短时不启用重合与篇幅比例检测（样本不足）
+EVENT_BODY_OVERLAP_MIN_SOURCE_CHARS = 100  # 原文太短时不启用重合检测（样本不足）
+EVENT_BODY_RATIO_MIN_SOURCE_CHARS = 300    # 原文不足此长度时不做比例检测，只兜底「不得长于原文」
 EVENT_BODY_OVERLAP_NGRAM = 6
-EVENT_BODY_SOURCE_RATIO_MAX = 0.50         # 正文净字数占 owned 原文净字数的上限
+EVENT_BODY_SOURCE_RATIO_MAX = 0.50         # 正文净字数占 owned 原文净字数的上限（仅原文达 RATIO_MIN 时生效）
 
 TRACK_EVENT_POLICIES = {'default', 'rolling_engineering'}
 EVENT_CURATOR_ACTIONS = {'create', 'extend', 'rewrite', 'merge'}
@@ -840,12 +841,14 @@ def validate_event_writer_result(result: dict[str, Any], owned_sources: list[dic
                     f'正文与 owned 原文逐字重合 {overlap:.0%}，超过 {EVENT_BODY_SOURCE_OVERLAP_MAX:.0%} 上限；'
                     '这是把原文换了一遍人称的搬运稿，不是改写。请重组句式与语序，'
                     '把叮嘱／判断放回它发生的场景，并保住第一人称主体。')
+        if source_chars:
             body_chars = _compact_len(body)
             if body_chars > source_chars:
                 violations.append(
                     f'正文净字数 {body_chars} 字，超过 owned 原文净字数 {source_chars} 字；'
                     '原文只有几条时不能靠注水扩写凑成相当篇幅，请只保留原文真实承载的内容。')
-            elif body_chars > source_chars * EVENT_BODY_SOURCE_RATIO_MAX:
+            elif (source_chars >= EVENT_BODY_RATIO_MIN_SOURCE_CHARS
+                  and body_chars > source_chars * EVENT_BODY_SOURCE_RATIO_MAX):
                 violations.append(
                     f'正文净字数 {body_chars} 字，是 owned 原文 {source_chars} 字的 {body_chars / source_chars:.0%}，'
                     f'超过 {EVENT_BODY_SOURCE_RATIO_MAX:.0%} 上限；只有几条原文时更不能逐条展开，请按真实信息量取舍。')
